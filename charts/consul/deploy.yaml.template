@@ -1,0 +1,43 @@
+privateRegistry:
+  secret: grdockercreds
+  url: docker.guide-rails.io
+  username: 
+  password: 
+mkcerts:
+  image: docker.guide-rails.io/mkcerts
+global:
+  enabled: false
+  datacenter:  
+  tls:
+    enabled: true
+    caKey:
+      secretName: consul-ca-key
+      secretKey: tls.key
+      key: 
+    caCert:
+      secretName: consul-ca-cert
+      secretKey: tls.crt
+      cert: 
+client:
+  enabled: true
+  dnsPolicy: ClusterFirstWithHostNet
+  hostNetwork: true
+  join:
+    - 10.128.1.11
+    - 10.128.2.12
+    - 10.129.0.13
+  hosts:
+    - 10.128.1.11
+    - 10.128.2.12
+    - 10.129.0.13
+externalServers:
+  enabled: true
+  hosts:
+    - 10.128.1.11
+    - 10.128.2.12
+    - 10.129.0.13
+connectInject:
+  enabled: true
+  default: true
+
+

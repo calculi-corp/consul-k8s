@@ -4,6 +4,12 @@
 
 ---
 
+## Calculi users
+
+For deploying this chart, populate the values in the 'charts/consul/deploy.yaml.template' file, rename it to 'charts/consul/deploy.yaml' and deploy with the following command:
+
+$ helm upgrade --install --debug --wait consul-client -f charts/consul/deploy.yaml charts/consul
+
  **We're looking for feedback on how folks are using Consul on Kubernetes. Please fill out our brief [survey](https://hashicorp.sjc1.qualtrics.com/jfe/form/SV_4MANbw1BUku7YhL)!** 
 
 ## Overview

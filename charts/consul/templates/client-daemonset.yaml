@@ -75,7 +75,10 @@ spec:
       {{- if .Values.client.hostNetwork }}
       hostNetwork: {{ .Values.client.hostNetwork }}
       {{- end }}
-
+      {{- if .Values.privateRegistry.secret }}
+      imagePullSecrets:
+      - name: {{ .Values.privateRegistry.secret }}
+      {{- end }}
       volumes:
         - name: data
         {{- if .Values.client.dataDirectoryHostPath }}
@@ -392,7 +395,7 @@ spec:
       {{- end }}
       {{- if and .Values.global.tls.enabled (not .Values.global.tls.enableAutoEncrypt) }}
       - name: client-tls-init
-        image: "{{ default .Values.global.image .Values.client.image }}"
+        image: "{{ default .Values.global.image .Values.mkcerts.image }}"
         env:
         - name: HOST_IP
           valueFrom:
@@ -406,16 +409,26 @@ spec:
           - "/bin/sh"
           - "-ec"
           - |
+            cat > /consul/tls/client/config.json << EOF
+              {
+                "ips": [
+                  "${POD_IP}",
+                  "${HOST_IP}"
+                ]
+              }
+            EOF
+
             cd /consul/tls/client
-            consul tls cert create -client \
-              -additional-ipaddress=${HOST_IP} \
-              -additional-ipaddress=${POD_IP} \
-              -dc={{ .Values.global.datacenter }} \
-              -domain={{ .Values.global.domain }} \
-              -ca=/consul/tls/ca/cert/tls.crt \
-              -key=/consul/tls/ca/key/tls.key
-            mv {{ .Values.global.datacenter }}-client-{{ .Values.global.domain }}-0.pem tls.crt
-            mv {{ .Values.global.datacenter }}-client-{{ .Values.global.domain }}-0-key.pem tls.key
+            mkcerts --cn "Calculi GR service" \
+              --in.cert /consul/tls/ca/cert/tls.crt \
+              --in.key /consul/tls/ca/key/tls.key \
+              --f tls \
+              --type client_server \
+              --ec 256 \
+              --configfile /consul/tls/client/config.json
+
+              mv tls.cert.pem tls.crt
+              mv tls.key.pem tls.key
         volumeMounts:
           - name: consul-client-cert
             mountPath: /consul/tls/client
