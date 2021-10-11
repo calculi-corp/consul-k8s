@@ -6,6 +6,10 @@
 
 ## Calculi users
 
+> :warning: **Please note** The 'default' branch for this code repository matches the last release version as mentioned in the remote repository (https://github.com/hashicorp/consul-k8s).
+When this repository was forked that version was 'v0.34.1', which is the same tag which was checked out to push the Calculi specific changes to this repo. Users can pull changes from the remote
+code repository to update the calculi-corp fork and push to the appropriate release branch and also set it as default.
+
 For deploying this chart, populate the values in the 'charts/consul/deploy.yaml.template' file, rename it to 'charts/consul/deploy.yaml' and deploy with the following command:
 
 $ helm upgrade --install --debug --wait consul-client -f charts/consul/deploy.yaml charts/consul
