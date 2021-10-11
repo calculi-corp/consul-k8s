@@ -1,0 +1,10 @@
+{{- if .Values.privateRegistry.secret }}
+{{- $imagePullSecret := printf "{\"auths\":{\"%s\": {\"username\":\"%s\",\"password\":\"%s\"}}}" .Values.privateRegistry.url .Values.privateRegistry.username .Values.privateRegistry.password | b64enc }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Values.privateRegistry.secret }}
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: {{$imagePullSecret}}
+{{- end }}
