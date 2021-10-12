@@ -7,4 +7,4 @@ values.dev.yaml
 bin/
 pkg/
 .idea/
-charts/consul/deploy.yaml
+deploy.yaml
