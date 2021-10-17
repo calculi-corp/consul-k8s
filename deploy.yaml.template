@@ -36,8 +36,12 @@ externalServers:
     - 10.128.1.11
     - 10.128.2.12
     - 10.129.0.13
-connectInject:
+# connectInject:
+#   enabled: true
+#   default: true
+syncCatalog:
   enabled: true
   default: true
+  toK8S: false
 
 
