@@ -12,7 +12,7 @@ code repository to update the calculi-corp fork and push to the appropriate rele
 
 For deploying this chart, populate the values in the 'deploy.yaml.template' file, rename it to 'deploy.yaml' and deploy with the following command:
 
-$ helm upgrade --install --debug --wait consul-client -f deploy.yaml charts/consul
+$ helm upgrade --install --debug --wait consul-client -f deploy.yaml --set-string "syncCatalog.k8sTag=<cluster name>" charts/consul
 
  **We're looking for feedback on how folks are using Consul on Kubernetes. Please fill out our brief [survey](https://hashicorp.sjc1.qualtrics.com/jfe/form/SV_4MANbw1BUku7YhL)!** 
 
