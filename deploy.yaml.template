@@ -4,7 +4,7 @@ privateRegistry:
   username: 
   password: 
 mkcerts:
-  image: docker.guide-rails.io/mkcerts
+  image: docker.guide-rails.io:443/mkcerts
 global:
   enabled: false
   datacenter:  
