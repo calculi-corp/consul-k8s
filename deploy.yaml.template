@@ -1,10 +1,10 @@
 privateRegistry:
   secret: grdockercreds
-  url: docker.guide-rails.io
+  url: registry.guide-rails.io
   username: 
   password: 
 mkcerts:
-  image: docker.guide-rails.io/mkcerts
+  image: registry.guide-rails.io/guide-rails/mkcerts
 global:
   enabled: false
   datacenter:  
@@ -42,7 +42,8 @@ externalServers:
 syncCatalog:
   enabled: true
   default: true
-  toK8S: false
+  toK8S: true
+  k8sTag: <a unique tag - you can use cluster name>
   k8sTag:
   resources:
     requests:
