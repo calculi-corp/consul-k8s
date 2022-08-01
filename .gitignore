@@ -7,5 +7,5 @@ values.dev.yaml
 bin/
 pkg/
 .idea/
-deploy.yaml
+deploy.yaml*
 *.tgz

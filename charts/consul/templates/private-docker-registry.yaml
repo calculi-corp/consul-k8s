@@ -4,6 +4,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: {{ .Values.privateRegistry.secret }}
+  namespace: {{ .Release.Namespace }}
 type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: {{$imagePullSecret}}
