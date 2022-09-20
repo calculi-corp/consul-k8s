@@ -23,15 +23,14 @@ type Command struct {
 
 	flags *flag.FlagSet
 	k8s   *k8sflags.K8SFlags
+	http  *flags.HTTPFlags
 
 	flagPartitionName string
 
 	// Flags to configure Consul connection
-	flagServerAddresses     []string
-	flagServerPort          uint
-	flagConsulCACert        string
-	flagConsulTLSServerName string
-	flagUseHTTPS            bool
+	flagServerAddresses []string
+	flagServerPort      uint
+	flagUseHTTPS        bool
 
 	flagLogLevel string
 	flagLogJSON  bool
@@ -59,13 +58,8 @@ func (c *Command) init() {
 		"The IP, DNS name or the cloud auto-join string of the Consul server(s). If providing IPs or DNS names, may be specified multiple times. "+
 			"At least one value is required.")
 	c.flags.UintVar(&c.flagServerPort, "server-port", 8500, "The HTTP or HTTPS port of the Consul server. Defaults to 8500.")
-	c.flags.StringVar(&c.flagConsulCACert, "consul-ca-cert", "",
-		"Path to the PEM-encoded CA certificate of the Consul cluster.")
-	c.flags.StringVar(&c.flagConsulTLSServerName, "consul-tls-server-name", "",
-		"The server name to set as the SNI header when sending HTTPS requests to Consul.")
 	c.flags.BoolVar(&c.flagUseHTTPS, "use-https", false,
 		"Toggle for using HTTPS for all API calls to Consul.")
-
 	c.flags.DurationVar(&c.flagTimeout, "timeout", 10*time.Minute,
 		"How long we'll try to bootstrap Partitions for before timing out, e.g. 1ms, 2s, 3m")
 	c.flags.StringVar(&c.flagLogLevel, "log-level", "info",
@@ -75,7 +69,9 @@ func (c *Command) init() {
 		"Enable or disable JSON output format for logging.")
 
 	c.k8s = &k8sflags.K8SFlags{}
+	c.http = &flags.HTTPFlags{}
 	flags.Merge(c.flags, c.k8s.Flags())
+	flags.Merge(c.flags, c.http.Flags())
 	c.help = flags.Usage(help, c.flags)
 
 	// Default retry to 1s. This is exposed for setting in tests.
@@ -132,14 +128,11 @@ func (c *Command) Run(args []string) int {
 	}
 	// For all of the next operations we'll need a Consul client.
 	serverAddr := fmt.Sprintf("%s:%d", serverAddresses[0], c.flagServerPort)
-	consulClient, err := consul.NewClient(&api.Config{
-		Address: serverAddr,
-		Scheme:  scheme,
-		TLSConfig: api.TLSConfig{
-			Address: c.flagConsulTLSServerName,
-			CAFile:  c.flagConsulCACert,
-		},
-	})
+	cfg := api.DefaultConfig()
+	cfg.Address = serverAddr
+	cfg.Scheme = scheme
+	c.http.MergeOntoConfig(cfg)
+	consulClient, err := consul.NewClient(cfg)
 	if err != nil {
 		c.UI.Error(fmt.Sprintf("Error creating Consul client for addr %q: %s", serverAddr, err))
 		return 1
@@ -151,7 +144,7 @@ func (c *Command) Run(args []string) int {
 			c.log.Error("Error reading Partition from Consul", "name", c.flagPartitionName, "error", err.Error())
 		} else if partition == nil {
 			// Retry Admin Partition creation until it succeeds, or we reach the command timeout.
-			_, _, err = consulClient.Partitions().Create(c.ctx, &api.AdminPartition{
+			_, _, err = consulClient.Partitions().Create(c.ctx, &api.Partition{
 				Name:        c.flagPartitionName,
 				Description: "Created by Helm installation",
 			}, nil)

@@ -3,7 +3,7 @@ package main
 // This script generates markdown documentation out of the values.yaml file
 // for use on consul.io.
 //
-// Usage: make gen-docs [consul-repo-path] [-validate]
+// Usage: make gen-helm-docs [consul-repo-path] [-validate]
 //        Where [consul-repo-path] is the location of the hashicorp/consul repo. Defaults to ../../../consul.
 //        If -validate is set, the generated docs won't be output anywhere.
 //        This is useful in CI to ensure the generation will succeed.
@@ -20,6 +20,11 @@ import (
 	"text/template"
 
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	tocPrefix = "## Top-Level Stanzas\n\nUse these links to navigate to a particular top-level stanza.\n\n"
+	tocSuffix = "\n## All Values"
 )
 
 var (
@@ -147,7 +152,15 @@ func GenerateDocs(yamlStr string) (string, error) {
 	}
 
 	children, err := generateDocsFromNode(docNodeTmpl, node)
-	return strings.ReplaceAll(strings.Join(children, "\n\n"), "[Enterprise Only]", "<EnterpriseAlert inline />"), err
+	if err != nil {
+		return "", err
+	}
+
+	enterpriseSubst := strings.ReplaceAll(strings.Join(children, "\n\n"), "[Enterprise Only]", "<EnterpriseAlert inline />")
+
+	// Add table of contents.
+	toc := generateTOC(node)
+	return toc + "\n\n" + enterpriseSubst + "\n", nil
 }
 
 // Parse parses yamlStr into a tree of DocNode's.
@@ -388,4 +401,14 @@ func buildDocNode(nodeContentIdx int, currNode *yaml.Node, nodeContent []*yaml.N
 		}
 	}
 	return DocNode{}, fmt.Errorf("fell through cases unexpectedly at breadcrumb: %s", parentBreadcrumb)
+}
+
+func generateTOC(node DocNode) string {
+	toc := tocPrefix
+
+	for _, c := range node.Children {
+		toc += fmt.Sprintf("- [`%s`](#%s)\n", c.Key, strings.ToLower(c.Key))
+	}
+
+	return toc + tocSuffix
 }

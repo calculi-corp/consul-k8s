@@ -3,15 +3,23 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ template "consul.fullname" . }}-connect-injector-webhook
+  name: {{ template "consul.fullname" . }}-connect-injector
   labels:
     app: {{ template "consul.name" . }}
     chart: {{ template "consul.chart" . }}
     heritage: {{ .Release.Service }}
     release: {{ .Release.Name }}
+    component: connect-injector
 rules:
-- apiGroups: [""]
-  resources: ["pods", "endpoints", "services", "namespaces"]
+{{- if .Values.global.acls.manageSystemACLs }}
+- apiGroups: [ "" ]
+  resources:
+  - serviceaccounts
+  verbs:
+  - get
+{{- end }}
+- apiGroups: [ "" ]
+  resources: [ "pods", "endpoints", "services", "namespaces" ]
   verbs:
   - "get"
   - "list"
@@ -26,20 +34,11 @@ rules:
   - list
   - update
 {{- if .Values.global.enablePodSecurityPolicies }}
-- apiGroups: ["policy"]
-  resources: ["podsecuritypolicies"]
+- apiGroups: [ "policy" ]
+  resources: [ "podsecuritypolicies" ]
   resourceNames:
-  - {{ template "consul.fullname" . }}-connect-injector-webhook
+  - {{ template "consul.fullname" . }}-connect-injector
   verbs:
   - use
-{{- end }}
-{{- if .Values.global.acls.manageSystemACLs }}
-- apiGroups: [""]
-  resources:
-  - secrets
-  resourceNames:
-  - {{ template "consul.fullname" . }}-connect-inject-acl-token
-  verbs:
-  - get
 {{- end }}
 {{- end }}

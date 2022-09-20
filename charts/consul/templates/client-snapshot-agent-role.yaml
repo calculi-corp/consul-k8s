@@ -10,27 +10,17 @@ metadata:
     chart: {{ template "consul.chart" . }}
     heritage: {{ .Release.Service }}
     release: {{ .Release.Name }}
-{{- if (or .Values.global.acls.manageSystemACLs .Values.global.enablePodSecurityPolicies) }}
-rules:
+    component: client-snapshot-agent
 {{- if .Values.global.enablePodSecurityPolicies }}
-  - apiGroups: ["policy"]
-    resources: ["podsecuritypolicies"]
-    resourceNames:
-    - {{ template "consul.fullname" . }}-snapshot-agent
-    verbs:
-    - use
-{{- end }}
-{{- if .Values.global.acls.manageSystemACLs }}
-  - apiGroups: [""]
-    resources:
-      - secrets
-    resourceNames:
-      - {{ template "consul.fullname" . }}-client-snapshot-agent-acl-token
-    verbs:
-      - get
-{{- end }}
+rules:
+- apiGroups: [ "policy" ]
+  resources: [ "podsecuritypolicies" ]
+  resourceNames:
+  - {{ template "consul.fullname" . }}-snapshot-agent
+  verbs:
+  - use
 {{- else }}
-rules: []
+rules: [ ]
 {{- end }}
 {{- end }}
 {{- end }}

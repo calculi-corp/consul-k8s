@@ -1,5 +1,8 @@
 {{- $serverEnabled := (or (and (ne (.Values.server.enabled | toString) "-") .Values.server.enabled) (and (eq (.Values.server.enabled | toString) "-") .Values.global.enabled)) -}}
-{{- if (and .Values.global.adminPartitions.enabled (not $serverEnabled)) }}
+{{- if (and .Values.global.adminPartitions.enabled (not $serverEnabled) (ne .Values.global.adminPartitions.name "default")) }}
+{{- template "consul.reservedNamesFailer" (list .Values.global.adminPartitions.name "global.adminPartitions.name") }}
+{{- if and (not .Values.externalServers.enabled) (ne .Values.global.adminPartitions.name "default") }}{{ fail "externalServers.enabled needs to be true and configured to create a non-default partition." }}{{ end -}}
+{{- if and .Values.global.secretsBackend.vault.enabled .Values.global.acls.manageSystemACLs (not .Values.global.secretsBackend.vault.adminPartitionsRole) }}{{ fail "global.secretsBackend.vault.adminPartitionsRole is required when global.secretsBackend.vault.enabled and global.acls.manageSystemACLs are true." }}{{ end -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -10,6 +13,7 @@ metadata:
     chart: {{ template "consul.chart" . }}
     heritage: {{ .Release.Service }}
     release: {{ .Release.Name }}
+    component: partition-init
   annotations:
     "helm.sh/hook": pre-install
     "helm.sh/hook-weight": "2"
@@ -25,10 +29,35 @@ spec:
         component: partition-init
       annotations:
         "consul.hashicorp.com/connect-inject": "false"
+        {{- if (and .Values.global.secretsBackend.vault.enabled (or .Values.global.tls.enabled .Values.global.acls.manageSystemACLs)) }}
+        "vault.hashicorp.com/agent-pre-populate-only": "true"
+        "vault.hashicorp.com/agent-inject": "true"
+        {{- if .Values.global.acls.manageSystemACLs }}
+        "vault.hashicorp.com/role": {{ .Values.global.secretsBackend.vault.adminPartitionsRole }}
+        {{- if .Values.global.acls.bootstrapToken.secretName }}
+        {{- with .Values.global.acls.bootstrapToken }}
+        "vault.hashicorp.com/agent-inject-secret-bootstrap-token": "{{ .secretName }}"
+        "vault.hashicorp.com/agent-inject-template-bootstrap-token": {{ template "consul.vaultSecretTemplate" . }}
+        {{- end }}
+        {{- end }}
+        {{- else }}
+        "vault.hashicorp.com/role": {{ .Values.global.secretsBackend.vault.consulCARole }}
+        {{- end }}
+        "vault.hashicorp.com/agent-inject-secret-serverca.crt": {{ .Values.global.tls.caCert.secretName }}
+        "vault.hashicorp.com/agent-inject-template-serverca.crt": {{ template "consul.serverTLSCATemplate" . }}
+        {{- if and .Values.global.secretsBackend.vault.ca.secretName .Values.global.secretsBackend.vault.ca.secretKey }}
+        "vault.hashicorp.com/agent-extra-secret": "{{ .Values.global.secretsBackend.vault.ca.secretName }}"
+        "vault.hashicorp.com/ca-cert": "/vault/custom/{{ .Values.global.secretsBackend.vault.ca.secretKey }}"
+        {{- end }}
+        {{- if .Values.global.secretsBackend.vault.agentAnnotations }}
+        {{ tpl .Values.global.secretsBackend.vault.agentAnnotations . | nindent 8 | trim }}
+        {{- end }}
+        {{- end }}
     spec:
       restartPolicy: Never
       serviceAccountName: {{ template "consul.fullname" . }}-partition-init
       {{- if .Values.global.tls.enabled }}
+      {{- if not (or .Values.externalServers.useSystemRoots .Values.global.secretsBackend.vault.enabled) }}
       volumes:
         - name: consul-ca-cert
           secret:
@@ -41,26 +70,39 @@ spec:
               - key: {{ default "tls.crt" .Values.global.tls.caCert.secretKey }}
                 path: tls.crt
       {{- end }}
+      {{- end }}
       containers:
-        - name: post-install-job
+        - name: partition-init-job
           image: {{ .Values.global.imageK8S }}
           env:
             - name: NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-          {{- if .Values.global.tls.enabled }}
+            {{- if (and .Values.global.acls.bootstrapToken.secretName .Values.global.acls.bootstrapToken.secretKey) }}
+            {{- if .Values.global.secretsBackend.vault.enabled }}
+            - name: CONSUL_HTTP_TOKEN_FILE
+              value: /vault/secrets/bootstrap-token
+            {{- else }}
+            - name: CONSUL_HTTP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.acls.bootstrapToken.secretName }}
+                  key: {{ .Values.global.acls.bootstrapToken.secretKey }}
+            {{- end }}
+            {{- end }}
+          {{- if .Values.global.tls.enabled  }}
+          {{- if not (or .Values.externalServers.useSystemRoots .Values.global.secretsBackend.vault.enabled) }}
           volumeMounts:
             - name: consul-ca-cert
               mountPath: /consul/tls/ca
               readOnly: true
-           {{- end }}
+          {{- end }}
+          {{- end }}
           command:
             - "/bin/sh"
             - "-ec"
             - |
-              CONSUL_FULLNAME="{{template "consul.fullname" . }}"
-
               consul-k8s-control-plane partition-init \
                 -log-level={{ .Values.global.logLevel }} \
                 -log-json={{ .Values.global.logJSON }} \
@@ -73,12 +115,15 @@ spec:
 
                 {{- if .Values.global.tls.enabled }}
                 -use-https \
-                -consul-ca-cert=/consul/tls/ca/tls.crt \
-                {{- if not .Values.externalServers.enabled }}
-                -server-port=8501 \
+                {{- if not .Values.externalServers.useSystemRoots }}
+                {{- if .Values.global.secretsBackend.vault.enabled }}
+                -ca-file=/vault/secrets/serverca.crt \
+                {{- else }}
+                -ca-file=/consul/tls/ca/tls.crt \
+                {{- end }}
                 {{- end }}
                 {{- if .Values.externalServers.tlsServerName }}
-                -consul-tls-server-name={{ .Values.externalServers.tlsServerName }} \
+                -tls-server-name={{ .Values.externalServers.tlsServerName }} \
                 {{- end }}
                 {{- end }}
                 -partition-name={{ .Values.global.adminPartitions.name }}

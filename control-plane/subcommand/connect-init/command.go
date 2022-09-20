@@ -22,8 +22,6 @@ const (
 	defaultTokenSinkFile   = "/consul/connect-inject/acl-token"
 	defaultProxyIDFile     = "/consul/connect-inject/proxyid"
 
-	// The number of times to attempt ACL Login.
-	numLoginRetries = 3
 	// The number of times to attempt to read this service (120s).
 	defaultServicePollingRetries = 120
 )
@@ -41,9 +39,10 @@ type Command struct {
 	flagLogLevel               string
 	flagLogJSON                bool
 
-	bearerTokenFile                    string // Location of the bearer token. Default is /var/run/secrets/kubernetes.io/serviceaccount/token.
-	tokenSinkFile                      string // Location to write the output token. Default is defaultTokenSinkFile.
-	proxyIDFile                        string // Location to write the output proxyID. Default is defaultProxyIDFile.
+	flagBearerTokenFile                string // Location of the bearer token. Default is /var/run/secrets/kubernetes.io/serviceaccount/token.
+	flagACLTokenSink                   string // Location to write the output token. Default is defaultTokenSinkFile.
+	flagProxyIDFile                    string // Location to write the output proxyID. Default is defaultProxyIDFile.
+	flagMultiPort                      bool
 	serviceRegistrationPollingAttempts uint64 // Number of times to poll for this service to be registered.
 
 	flagSet *flag.FlagSet
@@ -63,21 +62,16 @@ func (c *Command) init() {
 	c.flagSet.StringVar(&c.flagConsulServiceNamespace, "consul-service-namespace", "", "Consul destination namespace of the service.")
 	c.flagSet.StringVar(&c.flagServiceAccountName, "service-account-name", "", "Service account name on the pod.")
 	c.flagSet.StringVar(&c.flagServiceName, "service-name", "", "Service name as specified via the pod annotation.")
+	c.flagSet.StringVar(&c.flagBearerTokenFile, "bearer-token-file", defaultBearerTokenFile, "Path to service account token file.")
+	c.flagSet.StringVar(&c.flagACLTokenSink, "acl-token-sink", defaultTokenSinkFile, "File name where where ACL token should be saved.")
+	c.flagSet.StringVar(&c.flagProxyIDFile, "proxy-id-file", defaultProxyIDFile, "File name where proxy's Consul service ID should be saved.")
+	c.flagSet.BoolVar(&c.flagMultiPort, "multiport", false, "If the pod is a multi port pod.")
 	c.flagSet.StringVar(&c.flagLogLevel, "log-level", "info",
 		"Log verbosity level. Supported values (in order of detail) are \"trace\", "+
 			"\"debug\", \"info\", \"warn\", and \"error\".")
 	c.flagSet.BoolVar(&c.flagLogJSON, "log-json", false,
 		"Enable or disable JSON output format for logging.")
 
-	if c.bearerTokenFile == "" {
-		c.bearerTokenFile = defaultBearerTokenFile
-	}
-	if c.tokenSinkFile == "" {
-		c.tokenSinkFile = defaultTokenSinkFile
-	}
-	if c.proxyIDFile == "" {
-		c.proxyIDFile = defaultProxyIDFile
-	}
 	if c.serviceRegistrationPollingAttempts == 0 {
 		c.serviceRegistrationPollingAttempts = defaultServicePollingRetries
 	}
@@ -85,7 +79,6 @@ func (c *Command) init() {
 	c.http = &flags.HTTPFlags{}
 	flags.Merge(c.flagSet, c.http.Flags())
 	c.help = flags.Usage(help, c.flagSet)
-
 }
 
 func (c *Command) Run(args []string) int {
@@ -130,25 +123,25 @@ func (c *Command) Run(args []string) int {
 	if c.flagACLAuthMethod != "" {
 		// loginMeta is the default metadata that we pass to the consul login API.
 		loginMeta := map[string]string{"pod": fmt.Sprintf("%s/%s", c.flagPodNamespace, c.flagPodName)}
-		err = backoff.Retry(func() error {
-			err := common.ConsulLogin(consulClient, c.bearerTokenFile, c.flagACLAuthMethod, c.tokenSinkFile, c.flagAuthMethodNamespace, loginMeta)
-			if err != nil {
-				c.logger.Error("Consul login failed; retrying", "error", err)
+		loginParams := common.LoginParams{
+			AuthMethod:      c.flagACLAuthMethod,
+			Namespace:       c.flagAuthMethodNamespace,
+			BearerTokenFile: c.flagBearerTokenFile,
+			TokenSinkFile:   c.flagACLTokenSink,
+			Meta:            loginMeta,
+		}
+		token, err := common.ConsulLogin(consulClient, loginParams, c.logger)
+		if err != nil {
+			if c.flagServiceAccountName == "default" {
+				c.logger.Warn("The service account name for this Pod is \"default\"." +
+					" In default installations this is not a supported service account name." +
+					" The service account name must match the name of the Kubernetes Service" +
+					" or the consul.hashicorp.com/connect-service annotation.")
 			}
-			return err
-		}, backoff.WithMaxRetries(backoff.NewConstantBackOff(1*time.Second), numLoginRetries))
-		if err != nil {
-			c.logger.Error("Hit maximum retries for consul login", "error", err)
+			c.logger.Error("unable to complete login", "error", err)
 			return 1
 		}
-		// Now update the client so that it will read the ACL token we just fetched.
-		cfg.TokenFile = c.tokenSinkFile
-		consulClient, err = consul.NewClient(cfg)
-		if err != nil {
-			c.logger.Error("Unable to update client connection", "error", err)
-			return 1
-		}
-		c.logger.Info("Consul login complete")
+		cfg.Token = token
 	}
 
 	// Now wait for the service to be registered. Do this by querying the Agent for a service
@@ -156,9 +149,22 @@ func (c *Command) Run(args []string) int {
 	var proxyID string
 	registrationRetryCount := 0
 	var errServiceNameMismatch error
+	// We need a new client so that we can use the ACL token that was fetched during login to do the next bit,
+	// otherwise `consulClient` will still be using the bearerToken that was passed in.
+	consulClient, err = consul.NewClient(cfg)
+	if err != nil {
+		c.logger.Error("Unable to update client connection", "error", err)
+		return 1
+	}
 	err = backoff.Retry(func() error {
 		registrationRetryCount++
-		filter := fmt.Sprintf("Meta[%q] == %q and Meta[%q] == %q", connectinject.MetaKeyPodName, c.flagPodName, connectinject.MetaKeyKubeNS, c.flagPodNamespace)
+		filter := fmt.Sprintf("Meta[%q] == %q and Meta[%q] == %q ",
+			connectinject.MetaKeyPodName, c.flagPodName, connectinject.MetaKeyKubeNS, c.flagPodNamespace)
+		if c.flagMultiPort && c.flagServiceName != "" {
+			// If the service name is set and this is a multi-port pod there may be multiple services registered for
+			// this one Pod. If so, we want to ensure the service and proxy matching our expected name is registered.
+			filter += fmt.Sprintf(` and (Service == %q or Service == "%s-sidecar-proxy")`, c.flagServiceName, c.flagServiceName)
+		}
 		serviceList, err := consulClient.Agent().ServicesWithFilter(filter)
 		if err != nil {
 			c.logger.Error("Unable to get Agent services", "error", err)
@@ -173,7 +179,13 @@ func (c *Command) Run(args []string) int {
 				c.logger.Info("Check to ensure a Kubernetes service has been created for this application." +
 					" If your pod is not starting also check the connect-inject deployment logs.")
 			}
-			return fmt.Errorf("did not find correct number of services: %d", len(serviceList))
+			if len(serviceList) > 2 {
+				c.logger.Error("There are multiple Consul services registered for this pod when there must only be one." +
+					" Check if there are multiple Kubernetes services selecting this pod and add the label" +
+					" `consul.hashicorp.com/service-ignore: \"true\"` to all services except the one used by Consul for handling requests.")
+			}
+
+			return fmt.Errorf("did not find correct number of services, found: %d, services: %+v", len(serviceList), serviceList)
 		}
 		for _, svc := range serviceList {
 			c.logger.Info("Registered service has been detected", "service", svc.Service)
@@ -213,7 +225,7 @@ func (c *Command) Run(args []string) int {
 		return 1
 	}
 	// Write the proxy ID to the shared volume so `consul connect envoy` can use it for bootstrapping.
-	err = common.WriteFileWithPerms(c.proxyIDFile, proxyID, os.FileMode(0444))
+	err = common.WriteFileWithPerms(c.flagProxyIDFile, proxyID, os.FileMode(0444))
 	if err != nil {
 		c.logger.Error("Unable to write proxy ID to file", "error", err)
 		return 1

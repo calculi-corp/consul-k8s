@@ -31,6 +31,7 @@ func init() {
 // +kubebuilder:printcolumn:name="Synced",type="string",JSONPath=".status.conditions[?(@.type==\"Synced\")].status",description="The sync status of the resource with Consul"
 // +kubebuilder:printcolumn:name="Last Synced",type="date",JSONPath=".status.lastSyncedTime",description="The last successful synced time of the resource with Consul"
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp",description="The age of the resource"
+// +kubebuilder:resource:shortName="proxy-defaults"
 type ProxyDefaults struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -40,7 +41,7 @@ type ProxyDefaults struct {
 
 // +kubebuilder:object:root=true
 
-// ProxyDefaultsList contains a list of ProxyDefaults
+// ProxyDefaultsList contains a list of ProxyDefaults.
 type ProxyDefaultsList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
@@ -49,7 +50,7 @@ type ProxyDefaultsList struct {
 
 // RawMessage for Config based on recommendation here: https://github.com/kubernetes-sigs/controller-tools/issues/294#issuecomment-518380816
 
-// ProxyDefaultsSpec defines the desired state of ProxyDefaults
+// ProxyDefaultsSpec defines the desired state of ProxyDefaults.
 type ProxyDefaultsSpec struct {
 	// Config is an arbitrary map of configuration values used by Connect proxies.
 	// Any values that your proxy allows can be configured globally here.
@@ -178,7 +179,7 @@ func (in *ProxyDefaults) MatchesConsul(candidate api.ConfigEntry) bool {
 		cmp.Comparer(transparentProxyConfigComparer))
 }
 
-func (in *ProxyDefaults) Validate(namespacesEnabled bool) error {
+func (in *ProxyDefaults) Validate(_ common.ConsulMeta) error {
 	var allErrs field.ErrorList
 	path := field.NewPath("spec")
 
@@ -205,7 +206,7 @@ func (in *ProxyDefaults) Validate(namespacesEnabled bool) error {
 }
 
 // DefaultNamespaceFields has no behaviour here as proxy-defaults have no namespace specific fields.
-func (in *ProxyDefaults) DefaultNamespaceFields(_ bool, _ string, _ bool, _ string) {
+func (in *ProxyDefaults) DefaultNamespaceFields(_ common.ConsulMeta) {
 }
 
 // convertConfig converts the config of type json.RawMessage which is stored

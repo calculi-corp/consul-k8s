@@ -335,7 +335,7 @@ key2: value2' \
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
       yq -r '.spec.template.spec.containers[0].image' | tee /dev/stderr)
-  [ "${actual}" = "envoyproxy/envoy-alpine:v1.18.4" ]
+  [ "${actual}" = "envoyproxy/envoy-alpine:v1.20.2" ]
 }
 
 @test "meshGateway/Deployment: setting meshGateway.imageEnvoy fails" {
@@ -423,6 +423,50 @@ key2: value2' \
       --set 'meshGateway.initCopyConsulContainer.resources.limits.cpu=cpu2' \
       . | tee /dev/stderr |
       yq -r '.spec.template.spec.initContainers[0].resources' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory" ]
+
+  local actual=$(echo $object | yq -r '.requests.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu" ]
+
+  local actual=$(echo $object | yq -r '.limits.memory' | tee /dev/stderr)
+  [ "${actual}" = "memory2" ]
+
+  local actual=$(echo $object | yq -r '.limits.cpu' | tee /dev/stderr)
+  [ "${actual}" = "cpu2" ]
+}
+
+#--------------------------------------------------------------------
+# mesh-gateway-init container resources
+
+@test "meshGateway/Deployment: init mesh-gateway-init container has default resources" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.initContainers[1].resources' | tee /dev/stderr)
+
+  [ $(echo "${actual}" | yq -r '.requests.memory') = "50Mi" ]
+  [ $(echo "${actual}" | yq -r '.requests.cpu') = "50m" ]
+  [ $(echo "${actual}" | yq -r '.limits.memory') = "50Mi" ]
+  [ $(echo "${actual}" | yq -r '.limits.cpu') = "50m" ]
+}
+
+@test "meshGateway/Deployment: init mesh-gateway-init container resources can be set" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'meshGateway.initServiceInitContainer.resources.requests.memory=memory' \
+      --set 'meshGateway.initServiceInitContainer.resources.requests.cpu=cpu' \
+      --set 'meshGateway.initServiceInitContainer.resources.limits.memory=memory2' \
+      --set 'meshGateway.initServiceInitContainer.resources.limits.cpu=cpu2' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.initContainers[1].resources' | tee /dev/stderr)
 
   local actual=$(echo $object | yq -r '.requests.memory' | tee /dev/stderr)
   [ "${actual}" = "memory" ]
@@ -540,31 +584,228 @@ key2: value2' \
   [[ "$output" =~ "if global.acls.manageSystemACLs is true, meshGateway.consulServiceName cannot be set" ]]
 }
 
-@test "meshGateway/Deployment: does not fail if consulServiceName is set to mesh-gateway and acls.manageSystemACLs is true" {
+#--------------------------------------------------------------------
+# manageSystemACLs
+
+@test "meshGateway/Deployment: consul-logout preStop hook is added when ACLs are enabled" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
       --set 'meshGateway.enabled=true' \
       --set 'connectInject.enabled=true' \
-      --set 'meshGateway.consulServiceName=mesh-gateway' \
       --set 'global.acls.manageSystemACLs=true' \
-      . | tee /dev/stderr \
-      | yq '.spec.template.spec.containers[0]' | tee /dev/stderr )
-
-  [[ $(echo "${actual}" | yq -r '.lifecycle.preStop.exec.command' ) =~ '-id=\"mesh-gateway\"' ]]
+      . | tee /dev/stderr |
+      yq '[.spec.template.spec.containers[0].lifecycle.preStop.exec.command[3]] | any(contains("/consul-bin/consul logout"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
 }
 
-@test "meshGateway/Deployment: consulServiceName can be set" {
+@test "meshGateway/Deployment: CONSUL_HTTP_TOKEN_FILE is not set when acls are disabled" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
       --set 'meshGateway.enabled=true' \
       --set 'connectInject.enabled=true' \
-      --set 'meshGateway.consulServiceName=overridden' \
-      . | tee /dev/stderr \
-      | yq '.spec.template.spec.containers[0]' | tee /dev/stderr )
+      . | tee /dev/stderr |
+      yq '[.spec.template.spec.containers[0].env[0].name] | any(contains("CONSUL_HTTP_TOKEN_FILE"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
 
-  [[ $(echo "${actual}" | yq -r '.lifecycle.preStop.exec.command' ) =~ '-id=\"overridden\"' ]]
+@test "meshGateway/Deployment: CONSUL_HTTP_TOKEN_FILE is set when acls are enabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '[.spec.template.spec.containers[0].env[2].name] | any(contains("CONSUL_HTTP_TOKEN_FILE"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "meshGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls disabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[1]' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.name' | tee /dev/stderr)
+  [ "${actual}" = "mesh-gateway-init" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].value] | any(contains("http://$(HOST_IP):8500"))' | tee /dev/stderr)
+      echo $actual
+  [ "${actual}" = "true" ]
+}
+
+@test "meshGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "mesh-gateway-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].name] | any(contains("CONSUL_CACERT"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[3].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[3].value] | any(contains("https://$(HOST_IP):8501"))' | tee /dev/stderr)
+      echo $actual
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '.volumeMounts[2] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "meshGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command with Partitions enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.enableConsulNamespaces=true' \
+      --set 'global.adminPartitions.enabled=true' \
+      --set 'global.adminPartitions.name=default' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "mesh-gateway-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-partition=default"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].name] | any(contains("CONSUL_CACERT"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[3].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[3].value] | any(contains("https://$(HOST_IP):8501"))' | tee /dev/stderr)
+      echo $actual
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '.volumeMounts[2] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "meshGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled and autoencrypt enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "mesh-gateway-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].name] | any(contains("CONSUL_CACERT"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[3].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[3].value] | any(contains("https://$(HOST_IP):8501"))' | tee /dev/stderr)
+      echo $actual
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '.volumeMounts[2] | any(contains("consul-auto-encrypt-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "meshGateway/Deployment: auto-encrypt init container is created and is the first init-container when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled and autoencrypt enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[1]' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.name' | tee /dev/stderr)
+  [ "${actual}" = "get-auto-encrypt-client-ca" ]
+}
+
+@test "meshGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command when federation enabled in non-primary datacenter" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.datacenter=dc2' \
+      --set 'global.federation.enabled=true' \
+      --set 'global.federation.primaryDatacenter=dc1' \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "mesh-gateway-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-primary-datacenter=dc1"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
 }
 
 #--------------------------------------------------------------------
@@ -804,16 +1045,16 @@ key2: value2' \
 }
 
 ##--------------------------------------------------------------------
-## service-init init container
+## mesh-gateway-init init container
 
-@test "meshGateway/Deployment: service-init init container" {
+@test "meshGateway/Deployment: mesh-gateway-init init container" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
       --set 'meshGateway.enabled=true' \
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='consul-k8s-control-plane service-address \
   -log-level=info \
@@ -857,7 +1098,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container with acls.manageSystemACLs=true" {
+@test "meshGateway/Deployment: mesh-gateway-init init container with acls.manageSystemACLs=true" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -865,12 +1106,14 @@ EOF
       --set 'connectInject.enabled=true' \
       --set 'global.acls.manageSystemACLs=true' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='consul-k8s-control-plane acl-init \
-  -secret-name="RELEASE-NAME-consul-mesh-gateway-acl-token" \
-  -k8s-namespace=default \
-  -token-sink-file=/consul/service/acl-token
+  -component-name=mesh-gateway \
+  -token-sink-file=/consul/service/acl-token \
+  -acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method \
+  -log-level=info \
+  -log-json=false
 
 consul-k8s-control-plane service-address \
   -log-level=info \
@@ -915,7 +1158,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container with global.federation.enabled=true" {
+@test "meshGateway/Deployment: mesh-gateway-init init container with global.federation.enabled=true" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -924,7 +1167,7 @@ EOF
       --set 'global.federation.enabled=true' \
       --set 'global.tls.enabled=true' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='consul-k8s-control-plane service-address \
   -log-level=info \
@@ -971,7 +1214,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container containerPort and wanAddress.port can be changed" {
+@test "meshGateway/Deployment: mesh-gateway-init init container containerPort and wanAddress.port can be changed" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -981,7 +1224,7 @@ EOF
       --set 'meshGateway.wanAddress.source=NodeIP' \
       --set 'meshGateway.wanAddress.port=9999' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='WAN_ADDR="${HOST_IP}"
 WAN_PORT="9999"
@@ -1019,7 +1262,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=NodeIP" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=NodeIP" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1027,7 +1270,7 @@ EOF
       --set 'connectInject.enabled=true' \
       --set 'meshGateway.wanAddress.source=NodeIP' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='WAN_ADDR="${HOST_IP}"
 WAN_PORT="443"
@@ -1065,7 +1308,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=NodeName" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=NodeName" {
   cd `chart_dir`
   local obj=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1079,7 +1322,7 @@ EOF
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$obj" |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='WAN_ADDR="${NODE_NAME}"
 WAN_PORT="443"
@@ -1117,7 +1360,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=Static fails if wanAddress.static is empty" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=Static fails if wanAddress.static is empty" {
   cd `chart_dir`
   run helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1131,7 +1374,7 @@ EOF
   [[ "$output" =~ "if meshGateway.wanAddress.source=Static then meshGateway.wanAddress.static cannot be empty" ]]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=Static" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=Static" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1140,7 +1383,7 @@ EOF
       --set 'meshGateway.wanAddress.source=Static' \
       --set 'meshGateway.wanAddress.static=example.com' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='WAN_ADDR="example.com"
 WAN_PORT="443"
@@ -1178,7 +1421,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=Service fails if service.enable is false" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=Service fails if service.enable is false" {
   cd `chart_dir`
   run helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1192,7 +1435,7 @@ EOF
   [[ "$output" =~ "if meshGateway.wanAddress.source=Service then meshGateway.service.enabled must be set to true" ]]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=Service, type=LoadBalancer" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=Service, type=LoadBalancer" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1203,7 +1446,7 @@ EOF
       --set 'meshGateway.service.enabled=true' \
       --set 'meshGateway.service.type=LoadBalancer' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='consul-k8s-control-plane service-address \
   -log-level=info \
@@ -1247,7 +1490,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=Service, type=NodePort" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=Service, type=NodePort" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1258,7 +1501,7 @@ EOF
       --set 'meshGateway.service.nodePort=9999' \
       --set 'meshGateway.service.type=NodePort' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='WAN_ADDR="${HOST_IP}"
 WAN_PORT="9999"
@@ -1296,7 +1539,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=Service, type=NodePort fails if service.nodePort is null" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=Service, type=NodePort fails if service.nodePort is null" {
   cd `chart_dir`
   run helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1311,7 +1554,7 @@ EOF
   [[ "$output" =~ "if meshGateway.wanAddress.source=Service and meshGateway.service.type=NodePort, meshGateway.service.nodePort must be set" ]]
 }
 
-@test "meshGateway/Deployment: service-init init container wanAddress.source=Service, type=ClusterIP" {
+@test "meshGateway/Deployment: mesh-gateway-init init container wanAddress.source=Service, type=ClusterIP" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1322,7 +1565,7 @@ EOF
       --set 'meshGateway.service.enabled=true' \
       --set 'meshGateway.service.type=ClusterIP' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='consul-k8s-control-plane service-address \
   -log-level=info \
@@ -1366,7 +1609,7 @@ EOF
   [ "${actual}" = "${exp}" ]
 }
 
-@test "meshGateway/Deployment: service-init init container consulServiceName can be changed" {
+@test "meshGateway/Deployment: mesh-gateway-init init container consulServiceName can be changed" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/mesh-gateway-deployment.yaml  \
@@ -1374,7 +1617,7 @@ EOF
       --set 'connectInject.enabled=true' \
       --set 'meshGateway.consulServiceName=new-name' \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.initContainers | map(select(.name == "service-init"))[0] | .command[2]' | tee /dev/stderr)
+      yq -r '.spec.template.spec.initContainers | map(select(.name == "mesh-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='consul-k8s-control-plane service-address \
   -log-level=info \
@@ -1430,4 +1673,232 @@ EOF
       --set 'meshGateway.globalMode=something' .
   [ "$status" -eq 1 ]
   [[ "$output" =~ "meshGateway.globalMode is no longer supported; instead, you must migrate to CRDs (see www.consul.io/docs/k8s/crds/upgrade-to-crds)" ]]
+}
+
+#--------------------------------------------------------------------
+# partitions
+
+@test "meshGateway/Deployment: partitions options disabled by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.enableConsulNamespaces=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("partition"))' | tee /dev/stderr)
+
+  [ "${actual}" = "false" ]
+}
+
+@test "meshGateway/Deployment: partition name set on initContainer with .global.adminPartitions.enabled=true" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.adminPartitions.enabled=true' \
+      --set 'global.enableConsulNamespaces=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[1].command | any(contains("partition = \"default\""))' | tee /dev/stderr)
+
+  [ "${actual}" = "true" ]
+}
+
+@test "meshGateway/Deployment: partition name set on container with .global.adminPartitions.enabled=true" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.adminPartitions.enabled=true' \
+      --set 'global.enableConsulNamespaces=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("partition=default"))' | tee /dev/stderr)
+
+  [ "${actual}" = "true" ]
+}
+
+@test "meshGateway/Deployment: fails if namespaces are disabled and .global.adminPartitions.enabled=true" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.adminPartitions.enabled=true' \
+      --set 'global.enableConsulNamespaces=false' \
+      --set 'meshGateway.enabled=true' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "global.enableConsulNamespaces must be true if global.adminPartitions.enabled=true" ]]
+}
+
+#--------------------------------------------------------------------
+# Vault
+
+@test "meshGateway/Deployment: vault CA is not configured by default" {
+  cd `chart_dir`
+  local object=$(helm template \
+    -s templates/mesh-gateway-deployment.yaml  \
+    --set 'connectInject.enabled=true' \
+    --set 'meshGateway.enabled=true' \
+    --set 'global.tls.enabled=true' \
+    --set 'global.tls.enableAutoEncrypt=true' \
+    --set 'global.tls.caCert.secretName=foo' \
+    --set 'global.secretsBackend.vault.enabled=true' \
+    --set 'global.secretsBackend.vault.consulClientRole=foo' \
+    --set 'global.secretsBackend.vault.consulServerRole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test' \
+    . | tee /dev/stderr |
+      yq -r '.spec.template' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/agent-extra-secret")')
+  [ "${actual}" = "false" ]
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/ca-cert")')
+  [ "${actual}" = "false" ]
+}
+
+@test "meshGateway/Deployment: vault CA is not configured when secretName is set but secretKey is not" {
+  cd `chart_dir`
+  local object=$(helm template \
+    -s templates/mesh-gateway-deployment.yaml  \
+    --set 'connectInject.enabled=true' \
+    --set 'meshGateway.enabled=true' \
+    --set 'global.tls.enabled=true' \
+    --set 'global.tls.enableAutoEncrypt=true' \
+    --set 'global.tls.caCert.secretName=foo' \
+    --set 'global.secretsBackend.vault.enabled=true' \
+    --set 'global.secretsBackend.vault.consulClientRole=foo' \
+    --set 'global.secretsBackend.vault.consulServerRole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.ca.secretName=ca' \
+    . | tee /dev/stderr |
+      yq -r '.spec.template' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/agent-extra-secret")')
+  [ "${actual}" = "false" ]
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/ca-cert")')
+  [ "${actual}" = "false" ]
+}
+
+@test "meshGateway/Deployment: vault CA is not configured when secretKey is set but secretName is not" {
+  cd `chart_dir`
+  local object=$(helm template \
+    -s templates/mesh-gateway-deployment.yaml  \
+    --set 'connectInject.enabled=true' \
+    --set 'meshGateway.enabled=true' \
+    --set 'global.tls.enabled=true' \
+    --set 'global.tls.enableAutoEncrypt=true' \
+    --set 'global.tls.caCert.secretName=foo' \
+    --set 'global.secretsBackend.vault.enabled=true' \
+    --set 'global.secretsBackend.vault.consulClientRole=foo' \
+    --set 'global.secretsBackend.vault.consulServerRole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.ca.secretKey=tls.crt' \
+    . | tee /dev/stderr |
+      yq -r '.spec.template' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/agent-extra-secret")')
+  [ "${actual}" = "false" ]
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/ca-cert")')
+  [ "${actual}" = "false" ]
+}
+
+@test "meshGateway/Deployment: vault CA is configured when both secretName and secretKey are set" {
+  cd `chart_dir`
+  local object=$(helm template \
+    -s templates/mesh-gateway-deployment.yaml  \
+    --set 'connectInject.enabled=true' \
+    --set 'meshGateway.enabled=true' \
+    --set 'global.tls.enabled=true' \
+    --set 'global.tls.enableAutoEncrypt=true' \
+    --set 'global.tls.caCert.secretName=foo' \
+    --set 'global.secretsBackend.vault.enabled=true' \
+    --set 'global.secretsBackend.vault.consulClientRole=foo' \
+    --set 'global.secretsBackend.vault.consulServerRole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.ca.secretName=ca' \
+    --set 'global.secretsBackend.vault.ca.secretKey=tls.crt' \
+    . | tee /dev/stderr |
+      yq -r '.spec.template' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.metadata.annotations."vault.hashicorp.com/agent-extra-secret"')
+  [ "${actual}" = "ca" ]
+  local actual=$(echo $object | yq -r '.metadata.annotations."vault.hashicorp.com/ca-cert"')
+  [ "${actual}" = "/vault/custom/tls.crt" ]
+}
+
+@test "meshGateway/Deployment: vault tls annotations are set when tls is enabled" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'meshGateway.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'server.serverCert.secretName=pki_int/issue/test' \
+      --set 'global.tls.caCert.secretName=pki_int/cert/ca' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata' | tee /dev/stderr)
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-serverca.crt"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"pki_int/cert/ca\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-serverca.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "pki_int/cert/ca" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-init-first"]' | tee /dev/stderr)"
+  [ "${actual}" = "true" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject"]' | tee /dev/stderr)"
+  [ "${actual}" = "true" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/role"]' | tee /dev/stderr)"
+  [ "${actual}" = "test" ]
+}
+
+#--------------------------------------------------------------------
+# Vault agent annotations
+
+@test "meshGateway/Deployment: no vault agent annotations defined by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'meshGateway.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations | del(."consul.hashicorp.com/connect-inject") | del(."vault.hashicorp.com/agent-inject") | del(."vault.hashicorp.com/role")' | tee /dev/stderr)
+  [ "${actual}" = "{}" ]
+}
+
+@test "meshGateway/Deployment: vault agent annotations can be set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'meshGateway.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations.foo' | tee /dev/stderr)
+  [ "${actual}" = "bar" ]
 }

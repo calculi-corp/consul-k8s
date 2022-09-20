@@ -520,6 +520,40 @@ EOF
 }
 
 #--------------------------------------------------------------------
+# DNS
+
+@test "connectInject/Deployment: -enable-consul-dns unset by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -c -r '.spec.template.spec.containers[0].command | join(" ") | contains("-enable-consul-dns=true")' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: -enable-consul-dns is true if dns.enabled=true and dns.enableRedirection=true" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'dns.enableRedirection=true' \
+      . | tee /dev/stderr |
+      yq -c -r '.spec.template.spec.containers[0].command | join(" ") | contains("-enable-consul-dns=true")' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: -resource-prefix always set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -c -r '.spec.template.spec.containers[0].command | join(" ") | contains("-resource-prefix=RELEASE-NAME-consul")' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
 # global.tls.enabled
 
 @test "connectInject/Deployment: Adds tls-ca-cert volume when global.tls.enabled is true" {
@@ -892,25 +926,40 @@ EOF
 #--------------------------------------------------------------------
 # global.acls.manageSystemACLs
 
-@test "connectInject/Deployment: CONSUL_HTTP_TOKEN env variable created when global.acls.manageSystemACLs=true" {
+@test "connectInject/Deployment: consul-logout preStop hook is added when ACLs are enabled" {
   cd `chart_dir`
   local object=$(helm template \
       -s templates/connect-inject-deployment.yaml \
       --set 'connectInject.enabled=true' \
       --set 'global.acls.manageSystemACLs=true' \
       . | tee /dev/stderr |
-      yq '[.spec.template.spec.containers[0].env[].name] ' | tee /dev/stderr)
+      yq '[.spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]] | any(contains("consul-k8s-control-plane consul-logout"))' | tee /dev/stderr)
 
-  local actual=$(echo $object |
-    yq 'any(contains("CONSUL_HTTP_TOKEN"))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-
-  local actual=$(echo $object |
-    yq 'map(select(test("CONSUL_HTTP_TOKEN"))) | length' | tee /dev/stderr)
-  [ "${actual}" = "1" ]
+  [ "${object}" = "true" ]
 }
 
-@test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true" {
+@test "connectInject/Deployment: CONSUL_HTTP_TOKEN_FILE is not set when acls are disabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '[.spec.template.spec.containers[0].env[0].name] | any(contains("CONSUL_HTTP_TOKEN_FILE"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: CONSUL_HTTP_TOKEN_FILE is set when acls are enabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '[.spec.template.spec.containers[0].env[1].name] | any(contains("CONSUL_HTTP_TOKEN_FILE"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls disabled" {
   cd `chart_dir`
   local object=$(helm template \
       -s templates/connect-inject-deployment.yaml \
@@ -921,11 +970,144 @@ EOF
 
   local actual=$(echo $object |
       yq -r '.name' | tee /dev/stderr)
-  [ "${actual}" = "injector-acl-init" ]
+  [ "${actual}" = "connect-injector-acl-init" ]
 
   local actual=$(echo $object |
       yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[1].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[1].value] | any(contains("http://$(HOST_IP):8500"))' | tee /dev/stderr)
+      echo $actual
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "connect-injector-acl-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[1].name] | any(contains("CONSUL_CACERT"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].value] | any(contains("https://$(HOST_IP):8501"))' | tee /dev/stderr)
+      echo $actual
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '.volumeMounts[1] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command with Partitions enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.enableConsulNamespaces=true' \
+      --set 'global.adminPartitions.enabled=true' \
+      --set 'global.adminPartitions.name=default' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "connect-injector-acl-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-partition=default"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[1].name] | any(contains("CONSUL_CACERT"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].value] | any(contains("https://$(HOST_IP):8501"))' | tee /dev/stderr)
+      echo $actual
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '.volumeMounts[1] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled and autoencrypt enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "connect-injector-acl-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[1].name] | any(contains("CONSUL_CACERT"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].name] | any(contains("CONSUL_HTTP_ADDR"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '[.env[2].value] | any(contains("https://$(HOST_IP):8501"))' | tee /dev/stderr)
+      echo $actual
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq '.volumeMounts[1] | any(contains("consul-auto-encrypt-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: auto-encrypt init container is created and is the first init-container when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled and autoencrypt enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[0]' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.name' | tee /dev/stderr)
+  [ "${actual}" = "get-auto-encrypt-client-ca" ]
 }
 
 @test "connectInject/Deployment: cross namespace policy is not added when global.acls.manageSystemACLs=false" {
@@ -948,6 +1130,61 @@ EOF
       --set 'global.acls.manageSystemACLs=true' \
       . | tee /dev/stderr |
       yq '.spec.template.spec.containers[0].command | any(contains("-consul-cross-namespace-acl-policy"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command when in non-primary datacenter with Consul Namespaces disabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.datacenter=dc2' \
+      --set 'global.federation.enabled=true' \
+      --set 'global.federation.primaryDatacenter=dc1' \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "connect-injector-acl-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command when in non-primary datacenter with Consul Namespaces enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'global.datacenter=dc2' \
+      --set 'global.enableConsulNamespaces=true' \
+      --set 'global.federation.enabled=true' \
+      --set 'global.federation.primaryDatacenter=dc1' \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "connect-injector-acl-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-primary-datacenter=dc1"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -1131,19 +1368,19 @@ EOF
       yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-request=25Mi"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-request=25Mi"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-request=20m"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-request=20m"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-limit=50Mi"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-limit=50Mi"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-limit=20m"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-limit=20m"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -1160,19 +1397,19 @@ EOF
       yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-request=100Mi"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-request=100Mi"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-request=100m"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-request=100m"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-limit=200Mi"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-limit=200Mi"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-limit=200m"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-limit=200m"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -1189,19 +1426,19 @@ EOF
       yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-request=0"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-request=0"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-request=0"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-request=0"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-limit=0"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-limit=0"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-limit=0"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-limit=0"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -1218,19 +1455,19 @@ EOF
       yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-request"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-request"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-request"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-request"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-limit"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-limit"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-limit"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-limit"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
 }
 
@@ -1244,19 +1481,19 @@ EOF
       yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-request"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-request"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-request"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-request"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-memory-limit"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-memory-limit"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
 
   local actual=$(echo "$cmd" |
-    yq 'any(contains("-consul-sidecar-cpu-limit"))' | tee /dev/stderr)
+    yq 'any(contains("-default-consul-sidecar-cpu-limit"))' | tee /dev/stderr)
   [ "${actual}" = "false" ]
 }
 
@@ -1512,4 +1749,205 @@ EOF
       yq '.spec.replicas' | tee /dev/stderr)
 
   [ "${actual}" = "3" ]
+}
+
+#--------------------------------------------------------------------
+# Vault
+
+@test "connectInject/Deployment: vault CA is not configured by default" {
+  cd `chart_dir`
+  local object=$(helm template \
+    -s templates/connect-inject-deployment.yaml  \
+    --set 'connectInject.enabled=true' \
+    --set 'global.tls.enabled=true' \
+    --set 'global.tls.enableAutoEncrypt=true' \
+    --set 'global.tls.caCert.secretName=foo' \
+    --set 'global.secretsBackend.vault.enabled=true' \
+    --set 'global.secretsBackend.vault.consulClientRole=foo' \
+    --set 'global.secretsBackend.vault.consulServerRole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test' \
+    . | tee /dev/stderr |
+      yq -r '.spec.template' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/agent-extra-secret")')
+  [ "${actual}" = "false" ]
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/ca-cert")')
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: vault CA is not configured when secretName is set but secretKey is not" {
+  cd `chart_dir`
+  local object=$(helm template \
+    -s templates/connect-inject-deployment.yaml  \
+    --set 'connectInject.enabled=true' \
+    --set 'global.tls.enabled=true' \
+    --set 'global.tls.enableAutoEncrypt=true' \
+    --set 'global.tls.caCert.secretName=foo' \
+    --set 'global.secretsBackend.vault.enabled=true' \
+    --set 'global.secretsBackend.vault.consulClientRole=foo' \
+    --set 'global.secretsBackend.vault.consulServerRole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.ca.secretName=ca' \
+    . | tee /dev/stderr |
+      yq -r '.spec.template' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/agent-extra-secret")')
+  [ "${actual}" = "false" ]
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/ca-cert")')
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: vault CA is not configured when secretKey is set but secretName is not" {
+  cd `chart_dir`
+  local object=$(helm template \
+    -s templates/connect-inject-deployment.yaml  \
+    --set 'connectInject.enabled=true' \
+    --set 'global.tls.enabled=true' \
+    --set 'global.tls.enableAutoEncrypt=true' \
+    --set 'global.tls.caCert.secretName=foo' \
+    --set 'global.secretsBackend.vault.enabled=true' \
+    --set 'global.secretsBackend.vault.consulClientRole=foo' \
+    --set 'global.secretsBackend.vault.consulServerRole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.ca.secretKey=tls.crt' \
+    . | tee /dev/stderr |
+      yq -r '.spec.template' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/agent-extra-secret")')
+  [ "${actual}" = "false" ]
+  local actual=$(echo $object | yq -r '.metadata.annotations | has("vault.hashicorp.com/ca-cert")')
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: vault CA is configured when both secretName and secretKey are set" {
+  cd `chart_dir`
+  local object=$(helm template \
+    -s templates/connect-inject-deployment.yaml  \
+    --set 'connectInject.enabled=true' \
+    --set 'global.tls.enabled=true' \
+    --set 'global.tls.enableAutoEncrypt=true' \
+    --set 'global.tls.caCert.secretName=foo' \
+    --set 'global.secretsBackend.vault.enabled=true' \
+    --set 'global.secretsBackend.vault.consulClientRole=foo' \
+    --set 'global.secretsBackend.vault.consulServerRole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.ca.secretName=ca' \
+    --set 'global.secretsBackend.vault.ca.secretKey=tls.crt' \
+    . | tee /dev/stderr |
+      yq -r '.spec.template' | tee /dev/stderr)
+
+  local actual=$(echo $object | yq -r '.metadata.annotations."vault.hashicorp.com/agent-extra-secret"')
+  [ "${actual}" = "ca" ]
+  local actual=$(echo $object | yq -r '.metadata.annotations."vault.hashicorp.com/ca-cert"')
+  [ "${actual}" = "/vault/custom/tls.crt" ]
+}
+
+@test "connectInject/Deployment: vault tls annotations are set when tls is enabled" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'server.serverCert.secretName=pki_int/issue/test' \
+      --set 'global.tls.caCert.secretName=pki_int/cert/ca' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata' | tee /dev/stderr)
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-serverca.crt"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"pki_int/cert/ca\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-serverca.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "pki_int/cert/ca" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-init-first"]' | tee /dev/stderr)"
+  [ "${actual}" = "true" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject"]' | tee /dev/stderr)"
+  [ "${actual}" = "true" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/role"]' | tee /dev/stderr)"
+  [ "${actual}" = "test" ]
+}
+
+#--------------------------------------------------------------------
+# Vault agent annotations
+
+@test "connectInject/Deployment: no vault agent annotations defined by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations | del(."consul.hashicorp.com/connect-inject") | del(."vault.hashicorp.com/agent-inject") | del(."vault.hashicorp.com/role")' | tee /dev/stderr)
+  [ "${actual}" = "{}" ]
+}
+
+@test "connectInject/Deployment: vault agent annotations can be set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations.foo' | tee /dev/stderr)
+  [ "${actual}" = "bar" ]
+}
+
+# consulDestinationNamespace reserved name
+
+@test "connectInject/Deployment: fails when consulDestinationNamespace=system" {
+  reservedNameTest "system"
+}
+
+@test "connectInject/Deployment: fails when consulDestinationNamespace=universal" {
+  reservedNameTest "universal"
+}
+
+@test "connectInject/Deployment: fails when consulDestinationNamespace=consul" {
+  reservedNameTest "consul"
+}
+
+@test "connectInject/Deployment: fails when consulDestinationNamespace=operator" {
+  reservedNameTest "operator"
+}
+
+@test "connectInject/Deployment: fails when consulDestinationNamespace=root" {
+  reservedNameTest "root"
+}
+
+# reservedNameTest is a helper function that tests if certain Consul destination
+# namespace names fail because the name is reserved.
+reservedNameTest() {
+  cd `chart_dir`
+  local -r name="$1"
+		run helm template \
+				-s templates/connect-inject-deployment.yaml  \
+				--set 'connectInject.enabled=true' \
+				--set "connectInject.consulNamespaces.consulDestinationNamespace=$name" .
+
+		[ "$status" -eq 1 ]
+		[[ "$output" =~ "The name $name set for key connectInject.consulNamespaces.consulDestinationNamespace is reserved by Consul for future use" ]]
 }
