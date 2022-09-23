@@ -57,9 +57,9 @@
 				"exit_actions": {},
 				"properties": [
 					{
-						"name": "openshift.enabled",
-						"value": "true",
-						"type": "string"
+						"name": "global.openshift.enabled",
+						"value": true,
+						"type": "boolean"
 					},
 					{
 						"name": "privateRegistry.secret",
