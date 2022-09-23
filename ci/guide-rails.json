@@ -56,7 +56,7 @@
 				],
 				"exit_actions": {},
 				"properties": [
-					{	
+					{
 						"name": "global.openshift.enabled",
 						"value": "true",
 						"type": "boolean"
