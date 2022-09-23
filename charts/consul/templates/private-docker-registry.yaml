@@ -5,6 +5,11 @@ kind: Secret
 metadata:
   name: {{ .Values.privateRegistry.secret }}
   namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "consul.name" . }}
+    chart: {{ template "consul.chart" . }}
+    heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
 type: kubernetes.io/dockerconfigjson
 data:
   .dockerconfigjson: {{$imagePullSecret}}

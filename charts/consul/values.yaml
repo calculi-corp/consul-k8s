@@ -746,6 +746,10 @@ server:
     # @type: map
     # @recurse: false
     server: null
+    # The tls-init initContainer
+    # @type: map
+    # @recurse: false
+    tlsInit: null
 
   # This value is used to carefully
   # control a rolling update of Consul server agents. This value specifies the
@@ -1721,6 +1725,22 @@ syncCatalog:
     limits:
       memory: "50Mi"
       cpu: "50m"
+
+  # The container securityContext for each container in the sync-catalog pods.  In
+  # addition to the Pod's SecurityContext this can
+  # set the capabilities of processes running in the container and ensure the
+  # root file systems in the container is read-only.
+  # @type: map
+  # @recurse: true
+  containerSecurityContext:
+    # The consul sync-catalog container
+    # @type: map
+    # @recurse: false
+    syncCatalog: null
+    # The acl-init initContainer
+    # @type: map
+    # @recurse: false
+    aclInit: null
 
   # Override global log verbosity level. One of "debug", "info", "warn", or "error".
   # @type: string

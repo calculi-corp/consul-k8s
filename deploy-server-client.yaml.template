@@ -1,0 +1,99 @@
+privateRegistry:
+  secret: grdockercreds
+  url: registry.guide-rails.io
+  username: 
+  password: 
+mkcerts:
+  image: registry.guide-rails.io/guide-rails/mkcerts
+dns:
+  enabled: true
+global:
+  enabled: false
+  datacenter: rosa
+  tls:
+    enabled: true
+    caKey:
+      secretName: consul-ca-key
+      secretKey: tls.key
+      key: |
+
+    caCert:
+      secretName: consul-ca-cert
+      secretKey: tls.crt
+      cert: |
+
+server:
+  enabled: true
+  serverCert:
+    secretName: consul-ca-cert
+  containerSecurityContext:
+    server:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+    tlsInit:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+
+  
+client:
+  enabled: true
+  containerSecurityContext:
+    client:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+    aclInit:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+    tlsInit:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+syncCatalog:
+  enabled: true
+  default: true
+  toK8S: true
+  k8sTag: rosa-us-west-2a
+  resources:
+    requests:
+      memory: "100Mi"
+      cpu: "100m"
+    limits:
+      memory: "100Mi"
+      cpu: "100m"
+  containerSecurityContext:
+    syncCatalog:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+    aclInit:
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
+
+
+
