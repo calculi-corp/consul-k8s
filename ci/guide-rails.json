@@ -57,6 +57,11 @@
 				"exit_actions": {},
 				"properties": [
 					{
+						"name": "openshift.enabled",
+						"value": "true",
+						"type": "string"
+					},
+					{
 						"name": "privateRegistry.secret",
 						"value": "grdockercreds",
 						"type": "string"
