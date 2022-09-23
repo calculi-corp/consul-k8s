@@ -181,6 +181,11 @@
 						"name": "global.tls.caCert.cert",
 						"value": "((tls.cert))",
 						"type": "string"
+					},
+					{
+						"name": "gr.helm.wait.timeout",
+						"value": "5m",
+						"type": "string"
 					}
 				],
 				"deployment_strategy": {
