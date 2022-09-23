@@ -104,10 +104,8 @@ spec:
             limits:
               memory: "50Mi"
               cpu: "50m"
-          {{- if not .Values.global.openshift.enabled }}
           securityContext:
             {{- toYaml .Values.client.containerSecurityContext.tlsInit | nindent 12 }}
-          {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -12,3 +12,4 @@ deploy.yaml*
 *.tgz
 deploy-server-client.yaml
 .vscode
+debug-*.yaml
