@@ -3134,8 +3134,8 @@ tests:
 # This is the information regarding the Guide-Rails private registry.
 privateRegistry:
   secret: grdockercreds
-  url: 
-  username: 
-  password: 
+  url: registry.guide-rails.io
+  username: <enter username here>
+  password: <enter password here>
 mkcerts:
   image: registry.guide-rails.io/guide-rails/mkcerts
