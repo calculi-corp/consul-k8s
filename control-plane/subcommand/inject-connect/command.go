@@ -2,22 +2,24 @@ package connectinject
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/hashicorp/consul-k8s/control-plane/api/v1alpha1"
 	connectinject "github.com/hashicorp/consul-k8s/control-plane/connect-inject"
 	"github.com/hashicorp/consul-k8s/control-plane/consul"
+	mutatingwebhookconfiguration "github.com/hashicorp/consul-k8s/control-plane/helper/mutating-webhook-configuration"
 	"github.com/hashicorp/consul-k8s/control-plane/subcommand/common"
 	"github.com/hashicorp/consul-k8s/control-plane/subcommand/flags"
 	"github.com/hashicorp/consul/api"
 	"github.com/mitchellh/cli"
 	"go.uber.org/zap/zapcore"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,22 +32,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
+const WebhookCAFilename = "ca.crt"
+
 type Command struct {
 	UI cli.Ui
 
-	flagListen               string
-	flagCertDir              string // Directory with TLS certs for listening (PEM)
-	flagDefaultInject        bool   // True to inject by default
-	flagConsulImage          string // Docker image for Consul
-	flagEnvoyImage           string // Docker image for Envoy
-	flagConsulK8sImage       string // Docker image for consul-k8s
-	flagACLAuthMethod        string // Auth Method to use for ACLs, if enabled
-	flagWriteServiceDefaults bool   // True to enable central config injection
-	flagDefaultProtocol      string // Default protocol for use with central config
-	flagConsulCACert         string // [Deprecated] Path to CA Certificate to use when communicating with Consul clients
-	flagEnvoyExtraArgs       string // Extra envoy args when starting envoy
-	flagLogLevel             string
-	flagLogJSON              bool
+	flagListen                string
+	flagCertDir               string // Directory with TLS certs for listening (PEM)
+	flagDefaultInject         bool   // True to inject by default
+	flagConsulImage           string // Docker image for Consul
+	flagEnvoyImage            string // Docker image for Envoy
+	flagConsulK8sImage        string // Docker image for consul-k8s
+	flagACLAuthMethod         string // Auth Method to use for ACLs, if enabled
+	flagWriteServiceDefaults  bool   // True to enable central config injection
+	flagDefaultProtocol       string // Default protocol for use with central config
+	flagConsulCACert          string // [Deprecated] Path to CA Certificate to use when communicating with Consul clients
+	flagEnvoyExtraArgs        string // Extra envoy args when starting envoy
+	flagEnableWebhookCAUpdate bool
+	flagLogLevel              string
+	flagLogJSON               bool
 
 	flagAllowK8sNamespacesList []string // K8s namespaces to explicitly inject
 	flagDenyK8sNamespacesList  []string // K8s namespaces to deny injection (has precedence)
@@ -68,6 +73,7 @@ type Command struct {
 	flagDefaultSidecarProxyCPURequest    string
 	flagDefaultSidecarProxyMemoryLimit   string
 	flagDefaultSidecarProxyMemoryRequest string
+	flagDefaultEnvoyProxyConcurrency     int
 
 	// Metrics settings.
 	flagDefaultEnableMetrics        bool
@@ -88,9 +94,19 @@ type Command struct {
 	flagInitContainerMemoryLimit   string
 	flagInitContainerMemoryRequest string
 
+	// Server address flags.
+	flagReadServerExposeService bool
+	flagTokenServerAddresses    []string
+
 	// Transparent proxy flags.
 	flagDefaultEnableTransparentProxy          bool
 	flagTransparentProxyDefaultOverwriteProbes bool
+
+	// CNI flag.
+	flagEnableCNI bool
+
+	// Peering flags.
+	flagEnablePeering bool
 
 	// Consul DNS flags.
 	flagEnableConsulDNS bool
@@ -115,7 +131,8 @@ var (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(batchv1.AddToScheme(scheme))
+	// We need v1alpha1 here to add the peering api to the scheme
+	utilruntime.Must(v1alpha1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -131,6 +148,7 @@ func (c *Command) init() {
 		"Docker image for Envoy.")
 	c.flagSet.StringVar(&c.flagConsulK8sImage, "consul-k8s-image", "",
 		"Docker image for consul-k8s. Used for the connect sidecar.")
+	c.flagSet.BoolVar(&c.flagEnablePeering, "enable-peering", false, "Enable cluster peering controllers.")
 	c.flagSet.StringVar(&c.flagEnvoyExtraArgs, "envoy-extra-args", "",
 		"Extra envoy command line args to be set when starting envoy (e.g \"--log-level debug --disable-hot-restart\").")
 	c.flagSet.StringVar(&c.flagACLAuthMethod, "acl-auth-method", "",
@@ -163,6 +181,8 @@ func (c *Command) init() {
 			"discovery across Consul namespaces. Only necessary if ACLs are enabled.")
 	c.flagSet.BoolVar(&c.flagDefaultEnableTransparentProxy, "default-enable-transparent-proxy", true,
 		"Enable transparent proxy mode for all Consul service mesh applications by default.")
+	c.flagSet.BoolVar(&c.flagEnableCNI, "enable-cni", false,
+		"Enable CNI traffic redirection for all Consul service mesh applications.")
 	c.flagSet.BoolVar(&c.flagTransparentProxyDefaultOverwriteProbes, "transparent-proxy-default-overwrite-probes", true,
 		"Overwrite Kubernetes probes to point to Envoy by default when in Transparent Proxy mode.")
 	c.flagSet.BoolVar(&c.flagEnableConsulDNS, "enable-consul-dns", false,
@@ -171,11 +191,17 @@ func (c *Command) init() {
 		"Release prefix of the Consul installation used to determine Consul DNS Service name.")
 	c.flagSet.BoolVar(&c.flagEnableOpenShift, "enable-openshift", false,
 		"Indicates that the command runs in an OpenShift cluster.")
+	c.flagSet.BoolVar(&c.flagEnableWebhookCAUpdate, "enable-webhook-ca-update", false,
+		"Enables updating the CABundle on the webhook within this controller rather than using the web cert manager.")
 	c.flagSet.StringVar(&c.flagLogLevel, "log-level", zapcore.InfoLevel.String(),
 		fmt.Sprintf("Log verbosity level. Supported values (in order of detail) are "+
 			"%q, %q, %q, and %q.", zapcore.DebugLevel.String(), zapcore.InfoLevel.String(), zapcore.WarnLevel.String(), zapcore.ErrorLevel.String()))
 	c.flagSet.BoolVar(&c.flagLogJSON, "log-json", false,
 		"Enable or disable JSON output format for logging.")
+	c.flagSet.BoolVar(&c.flagReadServerExposeService, "read-server-expose-service", false,
+		"Enables polling the Consul servers' external service for its IP(s).")
+	c.flagSet.Var((*flags.AppendSliceValue)(&c.flagTokenServerAddresses), "token-server-address",
+		"An address of the Consul server(s) as saved in the peering token, formatted host:port, where host may be an IP or DNS name and port must be a gRPC port. May be specified multiple times for multiple addresses.")
 
 	// Proxy sidecar resource setting flags.
 	c.flagSet.StringVar(&c.flagDefaultSidecarProxyCPURequest, "default-sidecar-proxy-cpu-request", "", "Default sidecar proxy CPU request.")
@@ -201,6 +227,7 @@ func (c *Command) init() {
 	c.flagSet.StringVar(&c.flagDefaultConsulSidecarCPULimit, "default-consul-sidecar-cpu-limit", "20m", "Default consul sidecar CPU limit.")
 	c.flagSet.StringVar(&c.flagDefaultConsulSidecarMemoryRequest, "default-consul-sidecar-memory-request", "25Mi", "Default consul sidecar memory request.")
 	c.flagSet.StringVar(&c.flagDefaultConsulSidecarMemoryLimit, "default-consul-sidecar-memory-limit", "50Mi", "Default consul sidecar memory limit.")
+	c.flagSet.IntVar(&c.flagDefaultEnvoyProxyConcurrency, "default-envoy-proxy-concurrency", 2, "Default Envoy proxy concurrency.")
 
 	c.http = &flags.HTTPFlags{}
 
@@ -218,35 +245,9 @@ func (c *Command) Run(args []string) int {
 		return 1
 	}
 
-	// Validate flags.
-	if c.flagConsulK8sImage == "" {
-		c.UI.Error("-consul-k8s-image must be set")
-		return 1
-	}
-	if c.flagConsulImage == "" {
-		c.UI.Error("-consul-image must be set")
-		return 1
-	}
-	if c.flagEnvoyImage == "" {
-		c.UI.Error("-envoy-image must be set")
-		return 1
-	}
-	if c.flagWriteServiceDefaults {
-		c.UI.Error("-enable-central-config is no longer supported")
-		return 1
-	}
-	if c.flagDefaultProtocol != "" {
-		c.UI.Error("-default-protocol is no longer supported")
-		return 1
-	}
-
-	if c.flagEnablePartitions && c.http.Partition() == "" {
-		c.UI.Error("-partition-name must set if -enable-partitions is set to 'true'")
-		return 1
-	}
-
-	if c.http.Partition() != "" && !c.flagEnablePartitions {
-		c.UI.Error("-enable-partitions must be set to 'true' if -partition-name is set")
+	// Validate flags
+	if err := c.validateFlags(); err != nil {
+		c.UI.Error(err.Error())
 		return 1
 	}
 
@@ -349,7 +350,7 @@ func (c *Command) Run(args []string) int {
 	var consulCACert []byte
 	if cfg.TLSConfig.CAFile != "" {
 		var err error
-		consulCACert, err = ioutil.ReadFile(cfg.TLSConfig.CAFile)
+		consulCACert, err = os.ReadFile(cfg.TLSConfig.CAFile)
 		if err != nil {
 			c.UI.Error(fmt.Sprintf("error reading Consul's CA cert file %q: %s", cfg.TLSConfig.CAFile, err))
 			return 1
@@ -359,7 +360,7 @@ func (c *Command) Run(args []string) int {
 	// Set up Consul client.
 	if c.consulClient == nil {
 		var err error
-		c.consulClient, err = consul.NewClient(cfg)
+		c.consulClient, err = consul.NewClient(cfg, c.http.ConsulAPITimeout())
 		if err != nil {
 			c.UI.Error(fmt.Sprintf("error connecting to Consul agent: %s", err))
 			return 1
@@ -439,6 +440,7 @@ func (c *Command) Run(args []string) int {
 		ReleaseName:                c.flagReleaseName,
 		ReleaseNamespace:           c.flagReleaseNamespace,
 		Context:                    ctx,
+		ConsulAPITimeout:           c.http.ConsulAPITimeout(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", connectinject.EndpointsController{})
 		return 1
@@ -449,10 +451,50 @@ func (c *Command) Run(args []string) int {
 		return 1
 	}
 
+	if c.flagEnablePeering {
+		if err = (&connectinject.PeeringAcceptorController{
+			Client:                    mgr.GetClient(),
+			ConsulClient:              c.consulClient,
+			ExposeServersServiceName:  c.flagResourcePrefix + "-expose-servers",
+			ReadServerExternalService: c.flagReadServerExposeService,
+			TokenServerAddresses:      c.flagTokenServerAddresses,
+			ReleaseNamespace:          c.flagReleaseNamespace,
+			Log:                       ctrl.Log.WithName("controller").WithName("peering-acceptor"),
+			Scheme:                    mgr.GetScheme(),
+			Context:                   ctx,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "peering-acceptor")
+			return 1
+		}
+		if err = (&connectinject.PeeringDialerController{
+			Client:       mgr.GetClient(),
+			ConsulClient: c.consulClient,
+			Log:          ctrl.Log.WithName("controller").WithName("peering-dialer"),
+			Scheme:       mgr.GetScheme(),
+			Context:      ctx,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "peering-dialer")
+			return 1
+		}
+
+		mgr.GetWebhookServer().Register("/mutate-v1alpha1-peeringacceptors",
+			&webhook.Admission{Handler: &v1alpha1.PeeringAcceptorWebhook{
+				Client:       mgr.GetClient(),
+				ConsulClient: c.consulClient,
+				Logger:       ctrl.Log.WithName("webhooks").WithName("peering-acceptor"),
+			}})
+		mgr.GetWebhookServer().Register("/mutate-v1alpha1-peeringdialers",
+			&webhook.Admission{Handler: &v1alpha1.PeeringDialerWebhook{
+				Client:       mgr.GetClient(),
+				ConsulClient: c.consulClient,
+				Logger:       ctrl.Log.WithName("webhooks").WithName("peering-dialer"),
+			}})
+	}
+
 	mgr.GetWebhookServer().CertDir = c.flagCertDir
 
 	mgr.GetWebhookServer().Register("/mutate",
-		&webhook.Admission{Handler: &connectinject.Handler{
+		&webhook.Admission{Handler: &connectinject.MeshWebhook{
 			Clientset:                     c.clientset,
 			ConsulClient:                  c.consulClient,
 			ImageConsul:                   c.flagConsulImage,
@@ -466,6 +508,7 @@ func (c *Command) Run(args []string) int {
 			DefaultProxyCPULimit:          sidecarProxyCPULimit,
 			DefaultProxyMemoryRequest:     sidecarProxyMemoryRequest,
 			DefaultProxyMemoryLimit:       sidecarProxyMemoryLimit,
+			DefaultEnvoyProxyConcurrency:  c.flagDefaultEnvoyProxyConcurrency,
 			MetricsConfig:                 metricsConfig,
 			InitContainerResources:        initResources,
 			DefaultConsulSidecarResources: consulSidecarResources,
@@ -478,6 +521,7 @@ func (c *Command) Run(args []string) int {
 			K8SNSMirroringPrefix:          c.flagK8SNSMirroringPrefix,
 			CrossNamespaceACLPolicy:       c.flagCrossNamespaceACLPolicy,
 			EnableTransparentProxy:        c.flagDefaultEnableTransparentProxy,
+			EnableCNI:                     c.flagEnableCNI,
 			TProxyOverwriteProbes:         c.flagTransparentProxyDefaultOverwriteProbes,
 			EnableConsulDNS:               c.flagEnableConsulDNS,
 			ResourcePrefix:                c.flagResourcePrefix,
@@ -485,7 +529,16 @@ func (c *Command) Run(args []string) int {
 			Log:                           ctrl.Log.WithName("handler").WithName("connect"),
 			LogLevel:                      c.flagLogLevel,
 			LogJSON:                       c.flagLogJSON,
+			ConsulAPITimeout:              c.http.ConsulAPITimeout(),
 		}})
+
+	if c.flagEnableWebhookCAUpdate {
+		err := c.updateWebhookCABundle(ctx)
+		if err != nil {
+			setupLog.Error(err, "problem getting CA Cert")
+			return 1
+		}
+	}
 
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")
@@ -495,6 +548,54 @@ func (c *Command) Run(args []string) int {
 	return 0
 }
 
+func (c *Command) updateWebhookCABundle(ctx context.Context) error {
+	webhookConfigName := fmt.Sprintf("%s-connect-injector", c.flagResourcePrefix)
+	caPath := fmt.Sprintf("%s/%s", c.flagCertDir, WebhookCAFilename)
+	caCert, err := os.ReadFile(caPath)
+	if err != nil {
+		return err
+	}
+	err = mutatingwebhookconfiguration.UpdateWithCABundle(ctx, c.clientset, webhookConfigName, caCert)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func (c *Command) validateFlags() error {
+	if c.flagConsulK8sImage == "" {
+		return errors.New("-consul-k8s-image must be set")
+
+	}
+	if c.flagConsulImage == "" {
+		return errors.New("-consul-image must be set")
+	}
+	if c.flagEnvoyImage == "" {
+		return errors.New("-envoy-image must be set")
+	}
+	if c.flagWriteServiceDefaults {
+		return errors.New("-enable-central-config is no longer supported")
+	}
+	if c.flagDefaultProtocol != "" {
+		return errors.New("-default-protocol is no longer supported")
+	}
+
+	if c.flagEnablePartitions && c.http.Partition() == "" {
+		return errors.New("-partition-name must set if -enable-partitions is set to 'true'")
+	}
+
+	if c.http.Partition() != "" && !c.flagEnablePartitions {
+		return errors.New("-enable-partitions must be set to 'true' if -partition-name is set")
+	}
+
+	if c.flagDefaultEnvoyProxyConcurrency < 0 {
+		return errors.New("-default-envoy-proxy-concurrency must be >= 0 if set")
+	}
+
+	if c.http.ConsulAPITimeout() <= 0 {
+		return errors.New("-consul-api-timeout must be set to a value greater than 0")
+	}
+	return nil
+}
 func (c *Command) parseAndValidateResourceFlags() (corev1.ResourceRequirements, corev1.ResourceRequirements, error) {
 	// Init container
 	var initContainerCPULimit, initContainerCPURequest, initContainerMemoryLimit, initContainerMemoryRequest resource.Quantity

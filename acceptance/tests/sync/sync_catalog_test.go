@@ -18,6 +18,10 @@ import (
 // The test will create a test service and a pod and will
 // wait for the service to be synced *to* consul.
 func TestSyncCatalog(t *testing.T) {
+	cfg := suite.Config()
+	if cfg.EnableCNI {
+		t.Skipf("skipping because -enable-cni is set and sync catalog is already tested with regular tproxy")
+	}
 	cases := []struct {
 		name       string
 		helmValues map[string]string
@@ -63,7 +67,7 @@ func TestSyncCatalog(t *testing.T) {
 			logger.Log(t, "creating a static-server with a service")
 			k8s.DeployKustomize(t, ctx.KubectlOptions(t), suite.Config().NoCleanupOnFailure, suite.Config().DebugDirectory, "../fixtures/bases/static-server")
 
-			consulClient := consulCluster.SetupConsulClient(t, c.secure)
+			consulClient, _ := consulCluster.SetupConsulClient(t, c.secure)
 
 			logger.Log(t, "checking that the service has been synced to Consul")
 			var services map[string][]string

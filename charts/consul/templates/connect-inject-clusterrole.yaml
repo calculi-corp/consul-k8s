@@ -13,17 +13,24 @@ metadata:
 rules:
 {{- if .Values.global.acls.manageSystemACLs }}
 - apiGroups: [ "" ]
-  resources:
-  - serviceaccounts
+  resources: ["serviceaccounts", "secrets"]
   verbs:
   - get
 {{- end }}
 - apiGroups: [ "" ]
-  resources: [ "pods", "endpoints", "services", "namespaces" ]
+  resources: [ "endpoints", "services", "namespaces", "nodes" ]
   verbs:
   - "get"
   - "list"
   - "watch"
+- apiGroups: [ "" ]
+  resources:
+  - pods
+  verbs:
+  - "get"
+  - "list"
+  - "watch"
+  - "update"
 - apiGroups:
   - coordination.k8s.io
   resources:
@@ -33,6 +40,64 @@ rules:
   - get
   - list
   - update
+{{- if (and .Values.global.secretsBackend.vault.enabled .Values.global.secretsBackend.vault.connectInjectRole .Values.global.secretsBackend.vault.connectInject.tlsCert.secretName  .Values.global.secretsBackend.vault.connectInject.caCert.secretName)}}
+- apiGroups:
+  - admissionregistration.k8s.io
+  resources:
+  - mutatingwebhookconfigurations
+  verbs:
+  - get
+  - list
+  - watch
+  - patch
+{{- end }}
+{{- if .Values.global.peering.enabled }}
+- apiGroups: [ "" ]
+  resources: ["secrets"]
+  verbs:
+  - "get"
+  - "list"
+  - "watch"
+  - "create"
+  - "update"
+  - "delete"
+- apiGroups: ["consul.hashicorp.com"]
+  resources: ["peeringacceptors"]
+  verbs:
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - consul.hashicorp.com
+  resources:
+    - peeringacceptors/status
+  verbs:
+    - get
+    - patch
+    - update
+- apiGroups: ["consul.hashicorp.com"]
+  resources: ["peeringdialers"]
+  verbs:
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
+- apiGroups:
+    - consul.hashicorp.com
+  resources:
+    - peeringdialers/status
+  verbs:
+    - get
+    - patch
+    - update
+{{- end }}
 {{- if .Values.global.enablePodSecurityPolicies }}
 - apiGroups: [ "policy" ]
   resources: [ "podsecuritypolicies" ]

@@ -3,9 +3,6 @@ package connectinject
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -126,7 +123,7 @@ func TestProcessUpstreamsTLSandACLs(t *testing.T) {
 
 	masterToken := "b78d37c7-0ca7-5f4d-99ee-6d9975ce4586"
 	caFile, certFile, keyFile := test.GenerateServerCerts(t)
-	// Create test consul server with ACLs and TLS
+	// Create test consul server with ACLs and TLS.
 	consul, err := testutil.NewTestServerConfigT(t, func(c *testutil.TestServerConfig) {
 		c.ACL.Enabled = true
 		c.ACL.DefaultPolicy = "deny"
@@ -206,6 +203,219 @@ func TestProcessUpstreams(t *testing.T) {
 		consulPartitionsEnabled bool
 	}{
 		{
+			name: "annotated upstream with svc only",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc:1234"
+				return pod1
+			},
+			expected: []api.Upstream{
+				{
+					DestinationType: api.UpstreamDestTypeService,
+					DestinationName: "upstream1",
+					LocalBindPort:   1234,
+				},
+			},
+			consulNamespacesEnabled: false,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream with svc and dc",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.dc1.dc:1234"
+				return pod1
+			},
+			expected: []api.Upstream{
+				{
+					DestinationType: api.UpstreamDestTypeService,
+					DestinationName: "upstream1",
+					Datacenter:      "dc1",
+					LocalBindPort:   1234,
+				},
+			},
+			consulNamespacesEnabled: false,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream with svc and peer",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.peer1.peer:1234"
+				return pod1
+			},
+			expected: []api.Upstream{
+				{
+					DestinationType: api.UpstreamDestTypeService,
+					DestinationName: "upstream1",
+					DestinationPeer: "peer1",
+					LocalBindPort:   1234,
+				},
+			},
+			consulNamespacesEnabled: false,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream with svc and peer, needs ns before peer if namespaces enabled",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.peer1.peer:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.peer1.peer:1234",
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream with svc, ns, and peer",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.ns.peer1.peer:1234"
+				return pod1
+			},
+			expected: []api.Upstream{
+				{
+					DestinationType:      api.UpstreamDestTypeService,
+					DestinationName:      "upstream1",
+					DestinationPeer:      "peer1",
+					DestinationNamespace: "ns1",
+					LocalBindPort:        1234,
+				},
+			},
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream with svc, ns, and partition",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.ns.part1.ap:1234"
+				return pod1
+			},
+			expected: []api.Upstream{
+				{
+					DestinationType:      api.UpstreamDestTypeService,
+					DestinationName:      "upstream1",
+					DestinationPartition: "part1",
+					DestinationNamespace: "ns1",
+					LocalBindPort:        1234,
+				},
+			},
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: true,
+		},
+		{
+			name: "annotated upstream with svc, ns, and dc",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.ns.dc1.dc:1234"
+				return pod1
+			},
+			expected: []api.Upstream{
+				{
+					DestinationType:      api.UpstreamDestTypeService,
+					DestinationName:      "upstream1",
+					Datacenter:           "dc1",
+					DestinationNamespace: "ns1",
+					LocalBindPort:        1234,
+				},
+			},
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "multiple annotated upstreams",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.ns.dc1.dc:1234, upstream2.svc:2234, upstream3.svc.ns1.ns:3234, upstream4.svc.ns1.ns.peer1.peer:4234"
+				return pod1
+			},
+			expected: []api.Upstream{
+				{
+					DestinationType:      api.UpstreamDestTypeService,
+					DestinationName:      "upstream1",
+					Datacenter:           "dc1",
+					DestinationNamespace: "ns1",
+					LocalBindPort:        1234,
+				},
+				{
+					DestinationType: api.UpstreamDestTypeService,
+					DestinationName: "upstream2",
+					LocalBindPort:   2234,
+				},
+				{
+					DestinationType:      api.UpstreamDestTypeService,
+					DestinationName:      "upstream3",
+					DestinationNamespace: "ns1",
+					LocalBindPort:        3234,
+				},
+				{
+					DestinationType:      api.UpstreamDestTypeService,
+					DestinationName:      "upstream4",
+					DestinationNamespace: "ns1",
+					DestinationPeer:      "peer1",
+					LocalBindPort:        4234,
+				},
+			},
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: true,
+		},
+		{
+			name: "annotated upstream error: invalid partition/dc/peer",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.ns.part1.err:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.ns1.ns.part1.err:1234",
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream error: invalid namespace",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.err:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.ns1.err:1234",
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream error: invalid number of pieces in the address",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.err:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.err:1234",
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream error: invalid peer",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.peer1.err:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.peer1.err:1234",
+			consulNamespacesEnabled: false,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream error: invalid number of pieces in the address without namespaces and partitions",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.err:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.err:1234",
+			consulNamespacesEnabled: false,
+			consulPartitionsEnabled: false,
+		},
+		{
 			name: "upstream with datacenter without ProxyDefaults",
 			pod: func() *corev1.Pod {
 				pod1 := createPod("pod1", "1.2.3.4", true, true)
@@ -232,6 +442,39 @@ func TestProcessUpstreams(t *testing.T) {
 			},
 			consulNamespacesEnabled: false,
 			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream error: both peer and partition provided",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.ns.part1.partition.peer1.peer:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.ns1.ns.part1.partition.peer1.peer:1234",
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: true,
+		},
+		{
+			name: "annotated upstream error: both peer and dc provided",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.ns.peer1.peer.dc1.dc:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.ns1.ns.peer1.peer.dc1.dc:1234",
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: false,
+		},
+		{
+			name: "annotated upstream error: both dc and partition provided",
+			pod: func() *corev1.Pod {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod1.Annotations[annotationUpstreams] = "upstream1.svc.ns1.ns.part1.partition.dc1.dc:1234"
+				return pod1
+			},
+			expErr:                  "upstream structured incorrectly: upstream1.svc.ns1.ns.part1.partition.dc1.dc:1234",
+			consulNamespacesEnabled: true,
+			consulPartitionsEnabled: true,
 		},
 		{
 			name: "upstream with datacenter with ProxyDefaults and mesh gateway is in local mode",
@@ -471,10 +714,10 @@ func TestProcessUpstreams(t *testing.T) {
 			consulPartitionsEnabled: false,
 		},
 		{
-			name: "prepared query and non-query upstreams",
+			name: "prepared query and non-query upstreams and annotated non-query upstreams",
 			pod: func() *corev1.Pod {
 				pod1 := createPod("pod1", "1.2.3.4", true, true)
-				pod1.Annotations[annotationUpstreams] = "prepared_query:queryname:1234, upstream1:2234, prepared_query:6687bd19-5654-76be-d764:8202"
+				pod1.Annotations[annotationUpstreams] = "prepared_query:queryname:1234, upstream1:2234, prepared_query:6687bd19-5654-76be-d764:8202, upstream2.svc:3234"
 				return pod1
 			},
 			expected: []api.Upstream{
@@ -492,6 +735,11 @@ func TestProcessUpstreams(t *testing.T) {
 					DestinationType: api.UpstreamDestTypePreparedQuery,
 					DestinationName: "6687bd19-5654-76be-d764",
 					LocalBindPort:   8202,
+				},
+				{
+					DestinationType: api.UpstreamDestTypeService,
+					DestinationName: "upstream2",
+					LocalBindPort:   3234,
 				},
 			},
 			consulNamespacesEnabled: false,
@@ -803,7 +1051,7 @@ func TestReconcileCreateEndpoint_MultiportService(t *testing.T) {
 
 			fakeClient := fake.NewClientBuilder().WithRuntimeObjects(k8sObjects...).Build()
 
-			// Create test consul server
+			// Create test consul server.
 			consul, err := testutil.NewTestServerConfigT(t, func(c *testutil.TestServerConfig) {
 				c.NodeName = nodeName
 			})
@@ -1368,6 +1616,89 @@ func TestReconcileCreateEndpoint(t *testing.T) {
 				},
 			},
 		},
+		// Test that if a user is updating their deployment from non-mesh to mesh that we
+		// register the mesh pods.
+		{
+			name:          "Some endpoints injected, some not.",
+			consulSvcName: "service-created",
+			k8sObjects: func() []runtime.Object {
+				pod1 := createPod("pod1", "1.2.3.4", true, true)
+				pod2 := createPod("pod2", "2.3.4.5", false, false)
+
+				// NOTE: the order of the addresses is important. The non-mesh pod must be first to correctly
+				// reproduce the bug where we were exiting the loop early if any pod was non-mesh.
+				endpointWithTwoAddresses := &corev1.Endpoints{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "service-created",
+						Namespace: "default",
+					},
+					Subsets: []corev1.EndpointSubset{
+						{
+							Addresses: []corev1.EndpointAddress{
+								{
+									IP:       "2.3.4.5",
+									NodeName: &nodeName,
+									TargetRef: &corev1.ObjectReference{
+										Kind:      "Pod",
+										Name:      "pod2",
+										Namespace: "default",
+									},
+								},
+								{
+									IP:       "1.2.3.4",
+									NodeName: &nodeName,
+									TargetRef: &corev1.ObjectReference{
+										Kind:      "Pod",
+										Name:      "pod1",
+										Namespace: "default",
+									},
+								},
+							},
+						},
+					},
+				}
+				return []runtime.Object{pod1, pod2, endpointWithTwoAddresses}
+			},
+			initialConsulSvcs:       []*api.AgentServiceRegistration{},
+			expectedNumSvcInstances: 1,
+			expectedConsulSvcInstances: []*api.CatalogService{
+				{
+					ServiceID:      "pod1-service-created",
+					ServiceName:    "service-created",
+					ServiceAddress: "1.2.3.4",
+					ServicePort:    0,
+					ServiceMeta:    map[string]string{MetaKeyPodName: "pod1", MetaKeyKubeServiceName: "service-created", MetaKeyKubeNS: "default", MetaKeyManagedBy: managedByValue},
+					ServiceTags:    []string{},
+				},
+			},
+			expectedProxySvcInstances: []*api.CatalogService{
+				{
+					ServiceID:      "pod1-service-created-sidecar-proxy",
+					ServiceName:    "service-created-sidecar-proxy",
+					ServiceAddress: "1.2.3.4",
+					ServicePort:    20000,
+					ServiceProxy: &api.AgentServiceConnectProxyConfig{
+						DestinationServiceName: "service-created",
+						DestinationServiceID:   "pod1-service-created",
+						LocalServiceAddress:    "",
+						LocalServicePort:       0,
+					},
+					ServiceMeta: map[string]string{MetaKeyPodName: "pod1", MetaKeyKubeServiceName: "service-created", MetaKeyKubeNS: "default", MetaKeyManagedBy: managedByValue},
+					ServiceTags: []string{},
+				},
+			},
+			expectedAgentHealthChecks: []*api.AgentCheck{
+				{
+					CheckID:     "default/pod1-service-created/kubernetes-health-check",
+					ServiceName: "service-created",
+					ServiceID:   "pod1-service-created",
+					Name:        "Kubernetes Health Check",
+					Status:      api.HealthPassing,
+					Output:      kubernetesSuccessReasonMsg,
+					Type:        ttl,
+				},
+			},
+		},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1385,7 +1716,7 @@ func TestReconcileCreateEndpoint(t *testing.T) {
 
 			fakeClient := fake.NewClientBuilder().WithRuntimeObjects(k8sObjects...).Build()
 
-			// Create test consul server
+			// Create test consul server.
 			consul, err := testutil.NewTestServerConfigT(t, func(c *testutil.TestServerConfig) {
 				c.NodeName = nodeName
 			})
@@ -1499,13 +1830,14 @@ func TestReconcileCreateEndpoint(t *testing.T) {
 
 // Tests updating an Endpoints object.
 //   - Tests updates via the register codepath:
-//     - When an address in an Endpoint is updated, that the corresponding service instance in Consul is updated.
-//     - When an address is added to an Endpoint, an additional service instance in Consul is registered.
-//     - When an address in an Endpoint is updated - via health check change - the corresponding service instance is updated.
+//   - When an address in an Endpoint is updated, that the corresponding service instance in Consul is updated.
+//   - When an address is added to an Endpoint, an additional service instance in Consul is registered.
+//   - When an address in an Endpoint is updated - via health check change - the corresponding service instance is updated.
 //   - Tests updates via the deregister codepath:
-//     - When an address is removed from an Endpoint, the corresponding service instance in Consul is deregistered.
-//     - When an address is removed from an Endpoint *and there are no addresses left in the Endpoint*, the
+//   - When an address is removed from an Endpoint, the corresponding service instance in Consul is deregistered.
+//   - When an address is removed from an Endpoint *and there are no addresses left in the Endpoint*, the
 //     corresponding service instance in Consul is deregistered.
+//
 // For the register and deregister codepath, this also tests that they work when the Consul service name is different
 // from the K8s service name.
 // This test covers EndpointsController.deregisterServiceOnAllAgents when services should be selectively deregistered
@@ -2709,6 +3041,70 @@ func TestReconcileUpdateEndpoint(t *testing.T) {
 			},
 			enableACLs: true,
 		},
+		// When a Deployment has the mesh annotation removed, Kube will delete the old pods. When it deletes the last Pod,
+		// the endpoints object will contain only non-mesh pods, but you'll still have one consul service instance to clean up.
+		{
+			name:          "When a Deployment moves from mesh to non mesh its service instances should be deleted",
+			consulSvcName: "service-updated",
+			k8sObjects: func() []runtime.Object {
+				pod2 := createPod("pod2", "2.3.4.5", false, false)
+				endpoint := &corev1.Endpoints{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "service-updated",
+						Namespace: "default",
+					},
+					Subsets: []corev1.EndpointSubset{
+						{
+							Addresses: []corev1.EndpointAddress{
+								{
+									IP:       "2.3.4.5",
+									NodeName: &nodeName,
+									TargetRef: &corev1.ObjectReference{
+										Kind:      "Pod",
+										Name:      "pod2",
+										Namespace: "default",
+									},
+								},
+							},
+						},
+					},
+				}
+				return []runtime.Object{pod2, endpoint}
+			},
+			initialConsulSvcs: []*api.AgentServiceRegistration{
+				{
+					ID:      "pod1-service-updated",
+					Name:    "service-updated",
+					Port:    80,
+					Address: "1.2.3.4",
+					Meta: map[string]string{
+						MetaKeyKubeServiceName: "service-updated",
+						MetaKeyKubeNS:          "default",
+						MetaKeyManagedBy:       managedByValue,
+						MetaKeyPodName:         "pod1",
+					},
+				},
+				{
+					Kind:    api.ServiceKindConnectProxy,
+					ID:      "pod1-service-updated-sidecar-proxy",
+					Name:    "service-updated-sidecar-proxy",
+					Port:    20000,
+					Address: "1.2.3.4",
+					Proxy: &api.AgentServiceConnectProxyConfig{
+						DestinationServiceName: "service-updated",
+						DestinationServiceID:   "pod1-service-updated",
+					},
+					Meta: map[string]string{
+						MetaKeyKubeServiceName: "service-updated",
+						MetaKeyKubeNS:          "default",
+						MetaKeyManagedBy:       managedByValue,
+						MetaKeyPodName:         "pod1",
+					},
+				},
+			},
+			expectedConsulSvcInstances: nil,
+			expectedProxySvcInstances:  nil,
+		},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3298,17 +3694,14 @@ func TestReconcileIgnoresServiceIgnoreLabel(t *testing.T) {
 	}
 }
 
-// Test that when endpoints pods have not been connect-injected (i.e. not in the service mesh)
-// we don't make any API calls to Consul.
-// This is because we want to avoid any unnecessary calls. Especially if the client agent is unreachable
-// and any calls to it will result in an i/o timeout errors, it will
-// slow down processing of the events by the endpoints controller making unnecessary calls and waiting for ~30sec.
-func TestReconcile_endpointsIgnoredWhenNotInjected(t *testing.T) {
+// Test that when an endpoints pod specifies the name for the Kubernetes service it wants to use
+// for registration, all other endpoints for that pod are skipped.
+func TestReconcile_podSpecifiesExplicitService(t *testing.T) {
 	nodeName := "test-node"
 	namespace := "default"
 
-	// Set up the fake Kubernetes client with an endpoint, pod, consul client, and the default namespace.
-	endpoint := &corev1.Endpoints{
+	// Set up the fake Kubernetes client with a few endpoints, pod, consul client, and the default namespace.
+	badEndpoint := &corev1.Endpoints{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "not-in-mesh",
 			Namespace: namespace,
@@ -3329,28 +3722,45 @@ func TestReconcile_endpointsIgnoredWhenNotInjected(t *testing.T) {
 			},
 		},
 	}
-	pod1 := createPod("pod1", "1.2.3.4", false, true)
+	endpoint := &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "in-mesh",
+			Namespace: namespace,
+		},
+		Subsets: []corev1.EndpointSubset{
+			{
+				Addresses: []corev1.EndpointAddress{
+					{
+						IP:       "1.2.3.4",
+						NodeName: &nodeName,
+						TargetRef: &corev1.ObjectReference{
+							Kind:      "Pod",
+							Name:      "pod1",
+							Namespace: namespace,
+						},
+					},
+				},
+			},
+		},
+	}
+	pod1 := createPod("pod1", "1.2.3.4", true, true)
+	pod1.Annotations[annotationKubernetesService] = endpoint.Name
 	fakeClientPod := createPod("fake-consul-client", "127.0.0.1", false, true)
 	fakeClientPod.Labels = map[string]string{"component": "client", "app": "consul", "release": "consul"}
 	ns := corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}
-	k8sObjects := []runtime.Object{endpoint, pod1, fakeClientPod, &ns}
+	k8sObjects := []runtime.Object{badEndpoint, endpoint, pod1, fakeClientPod, &ns}
 	fakeClient := fake.NewClientBuilder().WithRuntimeObjects(k8sObjects...).Build()
 
 	// Create test Consul server.
-	consul := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "application/json")
-		if r != nil {
-			t.Fatalf("should not receive any calls to Consul client")
-		}
-	}))
-	t.Cleanup(consul.Close)
-
-	cfg := &api.Config{Address: consul.URL}
+	consul, err := testutil.NewTestServerConfigT(t, func(c *testutil.TestServerConfig) { c.NodeName = nodeName })
+	require.NoError(t, err)
+	defer consul.Stop()
+	consul.WaitForServiceIntentions(t)
+	cfg := &api.Config{Address: consul.HTTPAddr}
 	consulClient, err := api.NewClient(cfg)
 	require.NoError(t, err)
-	parsedURL, err := url.Parse(consul.URL)
-	require.NoError(t, err)
-	consulPort := parsedURL.Port()
+	addr := strings.Split(consul.HTTPAddr, ":")
+	consulPort := addr[1]
 
 	// Create the endpoints controller.
 	ep := &EndpointsController{
@@ -3366,11 +3776,54 @@ func TestReconcile_endpointsIgnoredWhenNotInjected(t *testing.T) {
 		ConsulClientCfg:       cfg,
 	}
 
-	// Run the reconcile process to deregister the service if it was registered before.
-	namespacedName := types.NamespacedName{Namespace: namespace, Name: "not-in-mesh"}
+	serviceName := badEndpoint.Name
+
+	// Initially register the pod with the bad endpoint
+	err = consulClient.Agent().ServiceRegister(&api.AgentServiceRegistration{
+		ID:      "pod1-" + serviceName,
+		Name:    serviceName,
+		Port:    0,
+		Address: "1.2.3.4",
+		Meta: map[string]string{
+			"k8s-namespace":    namespace,
+			"k8s-service-name": serviceName,
+			"managed-by":       "consul-k8s-endpoints-controller",
+			"pod-name":         "pod1",
+		},
+	})
+	require.NoError(t, err)
+	serviceInstances, _, err := consulClient.Catalog().Service(serviceName, "", nil)
+	require.NoError(t, err)
+	require.Len(t, serviceInstances, 1)
+
+	// Run the reconcile process to check service deregistration.
+	namespacedName := types.NamespacedName{Namespace: badEndpoint.Namespace, Name: serviceName}
 	resp, err := ep.Reconcile(context.Background(), ctrl.Request{NamespacedName: namespacedName})
 	require.NoError(t, err)
 	require.False(t, resp.Requeue)
+
+	// Check that the service has been deregistered with Consul.
+	serviceInstances, _, err = consulClient.Catalog().Service(serviceName, "", nil)
+	require.NoError(t, err)
+	require.Len(t, serviceInstances, 0)
+	proxyServiceInstances, _, err := consulClient.Catalog().Service(serviceName+"-sidecar-proxy", "", nil)
+	require.NoError(t, err)
+	require.Len(t, proxyServiceInstances, 0)
+
+	// Run the reconcile again with the service we want to register.
+	serviceName = endpoint.Name
+	namespacedName = types.NamespacedName{Namespace: endpoint.Namespace, Name: serviceName}
+	resp, err = ep.Reconcile(context.Background(), ctrl.Request{NamespacedName: namespacedName})
+	require.NoError(t, err)
+	require.False(t, resp.Requeue)
+
+	// Check that the correct services are registered with Consul.
+	serviceInstances, _, err = consulClient.Catalog().Service(serviceName, "", nil)
+	require.NoError(t, err)
+	require.Len(t, serviceInstances, 1)
+	proxyServiceInstances, _, err = consulClient.Catalog().Service(serviceName+"-sidecar-proxy", "", nil)
+	require.NoError(t, err)
+	require.Len(t, proxyServiceInstances, 1)
 }
 
 func TestFilterAgentPods(t *testing.T) {
@@ -5335,7 +5788,7 @@ func TestCreateServiceRegistrations_withTransparentProxy(t *testing.T) {
 				pod.Spec.Containers = c.podContainers
 			}
 
-			// We set these annotations explicitly as these are set by the handler and we
+			// We set these annotations explicitly as these are set by the meshWebhook and we
 			// need these values to determine which port to use for the service registration.
 			pod.Annotations[annotationPort] = "tcp"
 

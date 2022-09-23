@@ -5,7 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -285,7 +285,7 @@ func (c *Command) mergedMetricsHandler(rw http.ResponseWriter, _ *http.Request) 
 			c.logger.Error(fmt.Sprintf("Error closing envoy metrics body: %s", err.Error()))
 		}
 	}()
-	envoyMetricsBody, err := ioutil.ReadAll(envoyMetrics.Body)
+	envoyMetricsBody, err := io.ReadAll(envoyMetrics.Body)
 	if err != nil {
 		c.logger.Error("Could not read Envoy proxy metrics", "err", err)
 		http.Error(rw, fmt.Sprintf("Could not read Envoy proxy metrics: %s", err), http.StatusInternalServerError)
@@ -316,7 +316,7 @@ func (c *Command) mergedMetricsHandler(rw http.ResponseWriter, _ *http.Request) 
 			c.logger.Error(fmt.Sprintf("Error closing service metrics body: %s", err.Error()))
 		}
 	}()
-	serviceMetricsBody, err := ioutil.ReadAll(serviceMetrics.Body)
+	serviceMetricsBody, err := io.ReadAll(serviceMetrics.Body)
 	if err != nil {
 		c.logger.Error("Could not read service metrics", "err", err)
 		writeResponse(rw, serviceMetricSuccess(false), "service metrics success", c.logger)
@@ -358,6 +358,9 @@ func (c *Command) validateFlags() error {
 		if c.flagConsulBinary == "" {
 			return errors.New("-consul-binary must be set")
 		}
+		if c.http.ConsulAPITimeout() <= 0 {
+			return errors.New("-consul-api-timeout must be set to a value greater than 0")
+		}
 		_, err := os.Stat(c.flagServiceConfig)
 		if os.IsNotExist(err) {
 			return fmt.Errorf("-service-config file %q not found", c.flagServiceConfig)
@@ -390,7 +393,8 @@ func serviceMetricSuccess(success bool) []byte {
 func (c *Command) parseConsulFlags() []string {
 	var consulCommandFlags []string
 	c.http.Flags().VisitAll(func(f *flag.Flag) {
-		if f.Value.String() != "" {
+		// not adding -consul-api-timeout since consul does not use this flag
+		if f.Value.String() != "" && f.Name != "consul-api-timeout" {
 			consulCommandFlags = append(consulCommandFlags, fmt.Sprintf("-%s=%s", f.Name, f.Value.String()))
 		}
 	})

@@ -39,17 +39,15 @@ load _helpers
 }
 
 #--------------------------------------------------------------------
-# retry-join
+# server.replicas and server.bootstrapExpect
 
-@test "server/StatefulSet: retry join gets populated" {
+@test "server/StatefulSet: errors if bootstrapExpect < replicas" {
   cd `chart_dir`
-  local actual=$(helm template \
+  run helm template \
       -s templates/server-statefulset.yaml  \
-      --set 'server.replicas=3' \
-      . | tee /dev/stderr |
-      yq -r '.spec.template.spec.containers[0].command | any(contains("-retry-join"))' | tee /dev/stderr)
-
-  [ "${actual}" = "true" ]
+      --set 'server.bootstrapExpect=1' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "server.bootstrapExpect cannot be less than server.replicas" ]]
 }
 
 #--------------------------------------------------------------------
@@ -209,8 +207,8 @@ load _helpers
         . | tee /dev/stderr )
 
     local actual=$(echo "$object" |
-        yq -r '.spec.template.spec.volumes[2].secret.secretName' | tee /dev/stderr)
-    [ "${actual}" = "RELEASE-NAME-consul-server-cert" ]
+        yq -r '.spec.template.spec.volumes[] | select(.name == "consul-server-cert") | .secret.secretName' | tee /dev/stderr)
+    [ "${actual}" = "release-name-consul-server-cert" ]
 }
 
 @test "server/StatefulSet: consul-server-cert uses serverCert.secretName when serverCert (and caCert) are set" {
@@ -223,7 +221,7 @@ load _helpers
         . | tee /dev/stderr )
 
     local actual=$(echo "$object" |
-        yq -r '.spec.template.spec.volumes[2].secret.secretName' | tee /dev/stderr)
+        yq -r '.spec.template.spec.volumes[] | select(.name == "consul-server-cert") | .secret.secretName' | tee /dev/stderr)
     [ "${actual}" = "server-cert" ]
 }
 
@@ -329,9 +327,6 @@ load _helpers
 
   local command=$(echo "$object" |
       yq -r '.spec.template.spec.containers[0].command' | tee /dev/stderr)
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-serf-lan-port=8301"))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
 }
 
 @test "server/StatefulSet: server.ports.serflan.port can be customized" {
@@ -351,28 +346,27 @@ load _helpers
 
   local command=$(echo "$object" |
       yq -r '.spec.template.spec.containers[0].command' | tee /dev/stderr)
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-serf-lan-port=9301"))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
 }
 
-@test "server/StatefulSet: retry join uses server.ports.serflan.port" {
+#--------------------------------------------------------------------
+# extra-config
+
+@test "server/StatefulSet: has extra-config volume" {
   cd `chart_dir`
-  local command=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.replicas=3' \
-      --set 'server.ports.serflan.port=9301' \
+
+  # check that the extra-config volume is defined
+  local volume_name=$(helm template \
+      -s templates/server-statefulset.yaml \
       . | tee /dev/stderr |
-      yq -r '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+      yq -r '.spec.template.spec.volumes[] | select(.name == "extra-config") | .name' | tee /dev/stderr)
+  [ "${volume_name}" = "extra-config" ]
 
-  local actual=$(echo $command | jq -r ' . | any(contains("-retry-join=\"${CONSUL_FULLNAME}-server-0.${CONSUL_FULLNAME}-server.${NAMESPACE}.svc:9301\""))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-retry-join=\"${CONSUL_FULLNAME}-server-1.${CONSUL_FULLNAME}-server.${NAMESPACE}.svc:9301\""))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-
-  local actual=$(echo $command | jq -r ' . | any(contains("-retry-join=\"${CONSUL_FULLNAME}-server-2.${CONSUL_FULLNAME}-server.${NAMESPACE}.svc:9301\""))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
+  # check that the consul container mounts the volume at /consul/extra-config
+  local mount_path=$(helm template \
+      -s templates/server-statefulset.yaml \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.containers[] | select(.name == "consul") | .volumeMounts[] | select(.name == "extra-config") | .mountPath' | tee /dev/stderr)
+  [ "${mount_path}" = "/consul/extra-config" ]
 }
 
 #--------------------------------------------------------------------
@@ -675,45 +669,6 @@ load _helpers
   [ "${actual}" = "/v1/agent/metrics" ]
 }
 
-@test "server/StatefulSet: when global.metrics.enableAgentMetrics=true, sets telemetry flag" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.metrics.enabled=true'  \
-      --set 'global.metrics.enableAgentMetrics=true'  \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("telemetry { prometheus_retention_time = \"1m\" }")' | tee /dev/stderr)
-
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: when global.metrics.enableAgentMetrics=true and global.metrics.agentMetricsRetentionTime is set, sets telemetry flag with updated retention time" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.metrics.enabled=true'  \
-      --set 'global.metrics.enableAgentMetrics=true'  \
-      --set 'global.metrics.agentMetricsRetentionTime=5m'  \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("telemetry { prometheus_retention_time = \"5m\" }")' | tee /dev/stderr)
-
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: when global.metrics.enableAgentMetrics=true, global.tls.enabled=true and global.tls.httpsOnly=true, fail" {
-  cd `chart_dir`
-  run helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.metrics.enabled=true'  \
-      --set 'global.metrics.enableAgentMetrics=true'  \
-      --set 'global.tls.enabled=true'  \
-      --set 'global.tls.httpsOnly=true'  \
-      .
-
-  [ "$status" -eq 1 ]
-  [[ "$output" =~ "global.metrics.enableAgentMetrics cannot be enabled if TLS (HTTPS only) is enabled" ]]
-}
-
 #--------------------------------------------------------------------
 # config-configmap
 
@@ -723,7 +678,7 @@ load _helpers
       -s templates/server-statefulset.yaml  \
       . | tee /dev/stderr |
       yq -r '.spec.template.metadata.annotations."consul.hashicorp.com/config-checksum"' | tee /dev/stderr)
-  [ "${actual}" = 2c5397272acdc6fe5b079bf25c846c5a17f474603c794c64e7226ce0690625f7 ]
+  [ "${actual}" = 04cc39bf3f56ff39a2f4ae188fc37fc54b7775a073e8f97111eb37a548d7e229 ]
 }
 
 @test "server/StatefulSet: adds config-checksum annotation when extraConfig is provided" {
@@ -733,7 +688,7 @@ load _helpers
       --set 'server.extraConfig="{\"hello\": \"world\"}"' \
       . | tee /dev/stderr |
       yq -r '.spec.template.metadata.annotations."consul.hashicorp.com/config-checksum"' | tee /dev/stderr)
-  [ "${actual}" = b0d22cb051216505edc0e61b57f9eacc0d7e15b24719d815842df88f06f1abe0 ]
+  [ "${actual}" = e8d2e9535eb6e69eedebef725a66a8b47fd8845a77772f0e19911d2273b9b804 ]
 }
 
 @test "server/StatefulSet: adds config-checksum annotation when config is updated" {
@@ -743,7 +698,7 @@ load _helpers
       --set 'global.acls.manageSystemACLs=true' \
       . | tee /dev/stderr |
       yq -r '.spec.template.metadata.annotations."consul.hashicorp.com/config-checksum"' | tee /dev/stderr)
-  [ "${actual}" = 7772975be982e25cc8df101375374e2ba672a55737f8f1580011e0d88d8752a8 ]
+  [ "${actual}" = d5f4de988e9d51ff8ae91a24a1a990dc65ce046c0494836f6d0f0eae34108235 ]
 }
 
 #--------------------------------------------------------------------
@@ -769,7 +724,7 @@ load _helpers
 }
 
 #--------------------------------------------------------------------
-# tolerations
+# topologySpreadConstraints
 
 @test "server/StatefulSet: topologySpreadConstraints not set by default" {
   cd `chart_dir`
@@ -898,7 +853,7 @@ load _helpers
     -s templates/server-statefulset.yaml  \
     --set 'global.gossipEncryption.autoGenerate=true' \
     . | tee /dev/stderr |
-    yq '.spec.template.spec.containers[] | select(.name=="consul") | .env[] | select(.name == "GOSSIP_KEY") | .valueFrom.secretKeyRef | [.name=="RELEASE-NAME-consul-gossip-encryption-key", .key="key"] | all' | tee /dev/stderr)
+    yq '.spec.template.spec.containers[] | select(.name=="consul") | .env[] | select(.name == "GOSSIP_KEY") | .valueFrom.secretKeyRef | [.name=="release-name-consul-gossip-encryption-key", .key="key"] | all' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -994,7 +949,7 @@ load _helpers
   [ "${actual}" != "" ]
 }
 
-@test "server/StatefulSet: server volume present when TLS is enabled" {
+@test "server/StatefulSet: server cert volume present when TLS is enabled" {
   cd `chart_dir`
   local actual=$(helm template \
       -s templates/server-statefulset.yaml  \
@@ -1086,17 +1041,6 @@ load _helpers
   [ "${actual}" = "true" ]
 }
 
-@test "server/StatefulSet: HTTP is disabled in agent when httpsOnly is enabled" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.tls.enabled=true' \
-      --set 'global.tls.httpsOnly=true' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("ports { http = -1 }")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
 @test "server/StatefulSet: sets Consul environment variables when global.tls.enabled" {
   cd `chart_dir`
   local env=$(helm template \
@@ -1132,45 +1076,6 @@ load _helpers
     [ "${actual}" = "/vault/secrets/serverca.crt" ]
 }
 
-@test "server/StatefulSet: sets verify_* flags to true by default when global.tls.enabled" {
-  cd `chart_dir`
-  local command=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.tls.enabled=true' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ")' | tee /dev/stderr)
-
-  local actual
-  actual=$(echo $command | jq -r '. | contains("verify_incoming_rpc = true")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-
-  actual=$(echo $command | jq -r '. | contains("verify_outgoing = true")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-
-  actual=$(echo $command | jq -r '. | contains("verify_server_hostname = true")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: doesn't set the verify_* flags by default when global.tls.enabled and global.tls.verify is false" {
-  cd `chart_dir`
-  local command=$(helm template \
-      -s templates/server-statefulset.yaml \
-      --set 'global.tls.enabled=true' \
-      --set 'global.tls.verify=false' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ")' | tee /dev/stderr)
-
-  local actual
-  actual=$(echo $command | jq -r '. | contains("verify_incoming_rpc = true")' | tee /dev/stderr)
-  [ "${actual}" = "false" ]
-
-  actual=$(echo $command | jq -r '. | contains("verify_outgoing = true")' | tee /dev/stderr)
-  [ "${actual}" = "false" ]
-
-  actual=$(echo $command | jq -r '. | contains("verify_server_hostname = true")' | tee /dev/stderr)
-  [ "${actual}" = "false" ]
-}
-
 @test "server/StatefulSet: can overwrite CA secret with the provided one" {
   cd `chart_dir`
   local ca_cert_volume=$(helm template \
@@ -1203,29 +1108,6 @@ load _helpers
       --set 'global.federation.enabled=true' .
   [ "$status" -eq 1 ]
   [[ "$output" =~ "If global.federation.enabled is true, global.tls.enabled must be true because federation is only supported with TLS enabled" ]]
-}
-
-@test "server/StatefulSet: mesh gateway federation enabled when federation.enabled=true" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.federation.enabled=true' \
-      --set 'global.tls.enabled=true' \
-      --set 'meshGateway.enabled=true' \
-      --set 'connectInject.enabled=true' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("connect { enable_mesh_gateway_wan_federation = true }")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: mesh gateway federation not enabled when federation.enabled=false" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.federation.enabled=false' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("connect { enable_mesh_gateway_wan_federation = true }")' | tee /dev/stderr)
-  [ "${actual}" = "false" ]
 }
 
 #--------------------------------------------------------------------
@@ -1366,51 +1248,6 @@ load _helpers
 }
 
 #--------------------------------------------------------------------
-# global.tls.enableAutoEncrypt
-
-@test "server/StatefulSet: enables auto-encrypt for the servers when global.tls.enableAutoEncrypt is true" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.tls.enabled=true' \
-      --set 'global.tls.enableAutoEncrypt=true' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("auto_encrypt = {allow_tls = true}")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-#--------------------------------------------------------------------
-# -bootstrap-expect
-
-@test "server/StatefulSet: -bootstrap-expect defaults to replicas" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("-bootstrap-expect=3")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: -bootstrap-expect can be set by server.bootstrapExpect" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.bootstrapExpect=5' \
-      . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("-bootstrap-expect=5")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
-}
-
-@test "server/StatefulSet: errors if bootstrapExpect < replicas" {
-  cd `chart_dir`
-  run helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'server.bootstrapExpect=1' .
-  [ "$status" -eq 1 ]
-  [[ "$output" =~ "server.bootstrapExpect cannot be less than server.replicas" ]]
-}
-
-#--------------------------------------------------------------------
 # license-autoload
 
 @test "server/StatefulSet: adds volume for license secret when enterprise license secret name and key are provided" {
@@ -1444,16 +1281,6 @@ load _helpers
       . | tee /dev/stderr |
       yq -r -c '.spec.template.spec.containers[0].env[] | select(.name == "CONSUL_LICENSE_PATH")' | tee /dev/stderr)
       [ "${actual}" = '{"name":"CONSUL_LICENSE_PATH","value":"/consul/license/bar"}' ]
-}
-
-@test "server/StatefulSet: -recursor can be set by global.recursors" {
-  cd `chart_dir`
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'global.recursors[0]=1.2.3.4' \
-      . | tee /dev/stderr |
-      yq -r -c '.spec.template.spec.containers[0].command | join(" ") | contains("-recursor=\"1.2.3.4\"")' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
 }
 
 @test "server/StatefulSet: when global.enterpriseLicense.secretKey!=null and global.enterpriseLicense.secretName=null, fail" {
@@ -1848,7 +1675,7 @@ load _helpers
 
   local actual=$(echo $object |
       yq -r '.metadata.annotations["vault.hashicorp.com/agent-inject-template-servercert.crt"]' | tee /dev/stderr)
-  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server.default,RELEASE-NAME-consul-server.default,*.RELEASE-NAME-consul-server.default.svc,RELEASE-NAME-consul-server.default.svc,*.server.dc2.consul\" \"ip_sans=127.0.0.1\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,release-name-consul-server,*.release-name-consul-server,*.release-name-consul-server.default,release-name-consul-server.default,*.release-name-consul-server.default.svc,release-name-consul-server.default.svc,*.server.dc2.consul\" \"ip_sans=127.0.0.1\" -}}\n{{- .Data.certificate -}}\n{{- if .Data.ca_chain -}}\n{{- $lastintermediatecertindex := len .Data.ca_chain | subtract 1 -}}\n{{ range $index, $cacert := .Data.ca_chain }}\n{{ if (lt $index $lastintermediatecertindex) }}\n{{ $cacert }}\n{{ end }}\n{{ end }}\n{{- end -}}\n{{- end -}}'
   [ "${actual}" = "${expected}" ]
 
   local actual="$(echo $object |
@@ -1857,12 +1684,8 @@ load _helpers
 
   local actual="$(echo $object |
       yq -r '.metadata.annotations["vault.hashicorp.com/agent-inject-template-servercert.key"]' | tee /dev/stderr)"
-  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server.default,RELEASE-NAME-consul-server.default,*.RELEASE-NAME-consul-server.default.svc,RELEASE-NAME-consul-server.default.svc,*.server.dc2.consul\" \"ip_sans=127.0.0.1\" -}}\n{{- .Data.private_key -}}\n{{- end -}}'
+  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,release-name-consul-server,*.release-name-consul-server,*.release-name-consul-server.default,release-name-consul-server.default,*.release-name-consul-server.default.svc,release-name-consul-server.default.svc,*.server.dc2.consul\" \"ip_sans=127.0.0.1\" -}}\n{{- .Data.private_key -}}\n{{- end -}}'
   [ "${actual}" = "${expected}" ]
-
-  local actual=$(echo $object |
-    yq -r '.spec.containers[0].command | any(contains("ca_file = \"/vault/secrets/serverca.crt\""))' | tee /dev/stderr)
-  [ "${actual}" = "true" ]
 }
 
 @test "server/StatefulSet: tls related volumes not attached when tls is enabled on vault" {
@@ -1908,12 +1731,12 @@ load _helpers
 
   local actual=$(echo $object |
       yq -r '.metadata.annotations["vault.hashicorp.com/agent-inject-template-servercert.crt"]' | tee /dev/stderr)
-  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server.default,RELEASE-NAME-consul-server.default,*.RELEASE-NAME-consul-server.default.svc,RELEASE-NAME-consul-server.default.svc,*.server.dc2.consul,*.foo.com,*.bar.com\" \"ip_sans=127.0.0.1\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,release-name-consul-server,*.release-name-consul-server,*.release-name-consul-server.default,release-name-consul-server.default,*.release-name-consul-server.default.svc,release-name-consul-server.default.svc,*.server.dc2.consul,*.foo.com,*.bar.com\" \"ip_sans=127.0.0.1\" -}}\n{{- .Data.certificate -}}\n{{- if .Data.ca_chain -}}\n{{- $lastintermediatecertindex := len .Data.ca_chain | subtract 1 -}}\n{{ range $index, $cacert := .Data.ca_chain }}\n{{ if (lt $index $lastintermediatecertindex) }}\n{{ $cacert }}\n{{ end }}\n{{ end }}\n{{- end -}}\n{{- end -}}'
   [ "${actual}" = "${expected}" ]
 
   local actual="$(echo $object |
       yq -r '.metadata.annotations["vault.hashicorp.com/agent-inject-template-servercert.key"]' | tee /dev/stderr)"
-  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server.default,RELEASE-NAME-consul-server.default,*.RELEASE-NAME-consul-server.default.svc,RELEASE-NAME-consul-server.default.svc,*.server.dc2.consul,*.foo.com,*.bar.com\" \"ip_sans=127.0.0.1\" -}}\n{{- .Data.private_key -}}\n{{- end -}}'
+  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,release-name-consul-server,*.release-name-consul-server,*.release-name-consul-server.default,release-name-consul-server.default,*.release-name-consul-server.default.svc,release-name-consul-server.default.svc,*.server.dc2.consul,*.foo.com,*.bar.com\" \"ip_sans=127.0.0.1\" -}}\n{{- .Data.private_key -}}\n{{- end -}}'
   [ "${actual}" = "${expected}" ]
 }
 
@@ -1937,12 +1760,12 @@ load _helpers
 
   local actual=$(echo $object |
       yq -r '.metadata.annotations["vault.hashicorp.com/agent-inject-template-servercert.crt"]' | tee /dev/stderr)
-  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server.default,RELEASE-NAME-consul-server.default,*.RELEASE-NAME-consul-server.default.svc,RELEASE-NAME-consul-server.default.svc,*.server.dc2.consul\" \"ip_sans=127.0.0.1,1.1.1.1,2.2.2.2\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,release-name-consul-server,*.release-name-consul-server,*.release-name-consul-server.default,release-name-consul-server.default,*.release-name-consul-server.default.svc,release-name-consul-server.default.svc,*.server.dc2.consul\" \"ip_sans=127.0.0.1,1.1.1.1,2.2.2.2\" -}}\n{{- .Data.certificate -}}\n{{- if .Data.ca_chain -}}\n{{- $lastintermediatecertindex := len .Data.ca_chain | subtract 1 -}}\n{{ range $index, $cacert := .Data.ca_chain }}\n{{ if (lt $index $lastintermediatecertindex) }}\n{{ $cacert }}\n{{ end }}\n{{ end }}\n{{- end -}}\n{{- end -}}'
   [ "${actual}" = "${expected}" ]
 
   local actual="$(echo $object |
       yq -r '.metadata.annotations["vault.hashicorp.com/agent-inject-template-servercert.key"]' | tee /dev/stderr)"
-  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server,*.RELEASE-NAME-consul-server.default,RELEASE-NAME-consul-server.default,*.RELEASE-NAME-consul-server.default.svc,RELEASE-NAME-consul-server.default.svc,*.server.dc2.consul\" \"ip_sans=127.0.0.1,1.1.1.1,2.2.2.2\" -}}\n{{- .Data.private_key -}}\n{{- end -}}'
+  local expected=$'{{- with secret \"pki_int/issue/test\" \"common_name=server.dc2.consul\"\n\"alt_names=localhost,release-name-consul-server,*.release-name-consul-server,*.release-name-consul-server.default,release-name-consul-server.default,*.release-name-consul-server.default.svc,release-name-consul-server.default.svc,*.server.dc2.consul\" \"ip_sans=127.0.0.1,1.1.1.1,2.2.2.2\" -}}\n{{- .Data.private_key -}}\n{{- end -}}'
   [ "${actual}" = "${expected}" ]
 }
 
@@ -2106,33 +1929,5 @@ load _helpers
 
   # Check that path to Vault secret config is provided to the command.
   local actual="$(echo $object | yq -r '.spec.containers[] | select(.name=="consul").command | any(contains("-config-file=/vault/secrets/replication-token-config.hcl"))' | tee /dev/stderr)"
-  [ "${actual}" = "true" ]
-}
-
-#--------------------------------------------------------------------
-# ui.dashboardURLTemplates.service
-
-@test "server/StatefulSet: dashboard_url_templates not set by default" {
-  cd `chart_dir`
-
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      . | tee /dev/stderr |
-      yq -r ".spec.template.spec.containers[0].command | any(contains(\"dashboard_url_templates\"))" | tee /dev/stderr)
-
-  [ "${actual}" = "false" ]
-}
-
-@test "server/StatefulSet: ui.dashboardURLTemplates.service sets the template" {
-  cd `chart_dir`
-
-  local expected='-hcl='\''ui_config { dashboard_url_templates { service = \"http://localhost:3000/d/WkFEBmF7z/services?orgId=1&var-Service={{Service.Name}}\" } }'
-
-  local actual=$(helm template \
-      -s templates/server-statefulset.yaml  \
-      --set 'ui.dashboardURLTemplates.service=http://localhost:3000/d/WkFEBmF7z/services?orgId=1&var-Service={{Service.Name}}' \
-      . | tee /dev/stderr |
-      yq -r ".spec.template.spec.containers[0].command | any(contains(\"$expected\"))" | tee /dev/stderr)
-
   [ "${actual}" = "true" ]
 }

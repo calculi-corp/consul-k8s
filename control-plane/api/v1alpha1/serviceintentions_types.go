@@ -50,14 +50,14 @@ type ServiceIntentionsList struct {
 // ServiceIntentionsSpec defines the desired state of ServiceIntentions.
 type ServiceIntentionsSpec struct {
 	// Destination is the intention destination that will have the authorization granted to.
-	Destination Destination `json:"destination,omitempty"`
+	Destination IntentionDestination `json:"destination,omitempty"`
 	// Sources is the list of all intention sources and the authorization granted to those sources.
 	// The order of this list does not matter, but out of convenience Consul will always store this
 	// reverse sorted by intention precedence, as that is the order that they will be evaluated at enforcement time.
 	Sources SourceIntentions `json:"sources,omitempty"`
 }
 
-type Destination struct {
+type IntentionDestination struct {
 	// Name is the destination of all intentions defined in this config entry.
 	// This may be set to the wildcard character (*) to match
 	// all services that don't otherwise have intentions defined.
@@ -78,6 +78,8 @@ type SourceIntention struct {
 	Name string `json:"name,omitempty"`
 	// Namespace is the namespace for the Name parameter.
 	Namespace string `json:"namespace,omitempty"`
+	// [Experimental] Peer is the peer name for the Name parameter.
+	Peer string `json:"peer,omitempty"`
 	// Partition is the Admin Partition for the Name parameter.
 	Partition string `json:"partition,omitempty"`
 	// Action is required for an L4 intention, and should be set to one of
@@ -270,7 +272,7 @@ func (in *ServiceIntentions) Validate(consulMeta common.ConsulMeta) error {
 	}
 
 	errs = append(errs, in.validateNamespaces(consulMeta.NamespacesEnabled)...)
-	errs = append(errs, in.validatePartitions(consulMeta.PartitionsEnabled)...)
+	errs = append(errs, in.validateSourcePeerAndPartitions(consulMeta.PartitionsEnabled)...)
 
 	if len(errs) > 0 {
 		return apierrors.NewInvalid(
@@ -311,6 +313,7 @@ func (in *SourceIntention) toConsul() *capi.SourceIntention {
 		Name:        in.Name,
 		Namespace:   in.Namespace,
 		Partition:   in.Partition,
+		Peer:        in.Peer,
 		Action:      in.Action.toConsul(),
 		Permissions: in.Permissions.toConsul(),
 		Description: in.Description,
@@ -455,14 +458,16 @@ func (in *ServiceIntentions) validateNamespaces(namespacesEnabled bool) field.Er
 	return errs
 }
 
-func (in *ServiceIntentions) validatePartitions(partitionsEnabled bool) field.ErrorList {
+func (in *ServiceIntentions) validateSourcePeerAndPartitions(partitionsEnabled bool) field.ErrorList {
 	var errs field.ErrorList
 	path := field.NewPath("spec")
-	if !partitionsEnabled {
-		for i, source := range in.Spec.Sources {
-			if source.Partition != "" {
-				errs = append(errs, field.Invalid(path.Child("sources").Index(i).Child("partition"), source.Partition, `Consul Enterprise Admin Partitions must be enabled to set source.partition`))
-			}
+	for i, source := range in.Spec.Sources {
+		if source.Partition != "" && !partitionsEnabled {
+			errs = append(errs, field.Invalid(path.Child("sources").Index(i).Child("partition"), source.Partition, `Consul Enterprise Admin Partitions must be enabled to set source.partition`))
+		}
+
+		if source.Peer != "" && source.Partition != "" {
+			errs = append(errs, field.Invalid(path.Child("sources").Index(i), source, `Both source.peer and source.partition cannot be set.`))
 		}
 	}
 	return errs

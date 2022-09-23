@@ -5,6 +5,10 @@ const (
 	// a pod after an injection is done.
 	keyInjectStatus = "consul.hashicorp.com/connect-inject-status"
 
+	// keyTransparentProxyStatus is the key of the annotation that is added to
+	// a pod when transparent proxy is done.
+	keyTransparentProxyStatus = "consul.hashicorp.com/transparent-proxy-status"
+
 	// keyManagedBy is the key of the label that is added to pods managed
 	// by the Endpoints controller. This is to support upgrading from consul-k8s
 	// without Endpoints controller to consul-k8s with Endpoints controller
@@ -16,9 +20,20 @@ const (
 	// be set to a truthy or falsy value, as parseable by strconv.ParseBool.
 	annotationInject = "consul.hashicorp.com/connect-inject"
 
+	// annotationInjectMountVolumes is the key of the annotation that controls whether
+	// the data volume that connect inject uses to store data including the Consul ACL token
+	// is mounted to other containers in the pod. It is a comma-separated list of container names
+	// to mount the volume on. It will be mounted at the path `/consul/connect-inject`.
+	annotationInjectMountVolumes = "consul.hashicorp.com/connect-inject-mount-volume"
+
 	// annotationService is the name of the service to proxy.
 	// This defaults to the name of the Kubernetes service associated with the pod.
 	annotationService = "consul.hashicorp.com/connect-service"
+
+	// annotationKubernetesService is the name of the Kubernetes service to register.
+	// This allows a pod to specify what Kubernetes service should trigger a Consul
+	// service registration in the case of multiple services referencing a deployment.
+	annotationKubernetesService = "consul.hashicorp.com/kubernetes-service"
 
 	// annotationPort is the name or value of the port to proxy incoming
 	// connections to.
@@ -75,6 +90,13 @@ const (
 	annotationConsulSidecarMemoryLimit   = "consul.hashicorp.com/consul-sidecar-memory-limit"
 	annotationConsulSidecarMemoryRequest = "consul.hashicorp.com/consul-sidecar-memory-request"
 
+	// annotations for sidecar volumes.
+	annotationConsulSidecarUserVolume      = "consul.hashicorp.com/consul-sidecar-user-volume"
+	annotationConsulSidecarUserVolumeMount = "consul.hashicorp.com/consul-sidecar-user-volume-mount"
+
+	// annotations for sidecar concurrency.
+	annotationEnvoyProxyConcurrency = "consul.hashicorp.com/consul-envoy-proxy-concurrency"
+
 	// annotations for metrics to configure where Prometheus scrapes
 	// metrics from, whether to run a merged metrics endpoint on the consul
 	// sidecar, and configure the connect service metrics.
@@ -85,6 +107,12 @@ const (
 	annotationPrometheusScrapePath = "consul.hashicorp.com/prometheus-scrape-path"
 	annotationServiceMetricsPort   = "consul.hashicorp.com/service-metrics-port"
 	annotationServiceMetricsPath   = "consul.hashicorp.com/service-metrics-path"
+
+	// annotations for configuring TLS for Prometheus.
+	annotationPrometheusCAFile   = "consul.hashicorp.com/prometheus-ca-file"
+	annotationPrometheusCAPath   = "consul.hashicorp.com/prometheus-ca-path"
+	annotationPrometheusCertFile = "consul.hashicorp.com/prometheus-cert-file"
+	annotationPrometheusKeyFile  = "consul.hashicorp.com/prometheus-key-file"
 
 	// annotationEnvoyExtraArgs is a space-separated list of arguments to be passed to the
 	// envoy binary. See list of args here: https://www.envoyproxy.io/docs/envoy/latest/operations/cli
@@ -124,16 +152,31 @@ const (
 	// to point to the Envoy proxy when running in Transparent Proxy mode.
 	annotationTransparentProxyOverwriteProbes = "consul.hashicorp.com/transparent-proxy-overwrite-probes"
 
+	// annotationRedirectTraffic stores iptables.Config information so that the CNI plugin can use it to apply
+	// iptables rules.
+	annotationRedirectTraffic = "consul.hashicorp.com/redirect-traffic-config"
+
 	// annotationOriginalPod is the value of the pod before being overwritten by the consul
-	// webhook/handler.
+	// webhook/meshWebhook.
 	annotationOriginalPod = "consul.hashicorp.com/original-pod"
+
+	// annotationPeeringVersion is the version of the peering resource and can be utilized
+	// to explicitly perform the peering operation again.
+	annotationPeeringVersion = "consul.hashicorp.com/peering-version"
 
 	// labelServiceIgnore is a label that can be added to a service to prevent it from being
 	// registered with Consul.
 	labelServiceIgnore = "consul.hashicorp.com/service-ignore"
 
-	// injected is used as the annotation value for annotationInjected.
+	// labelPeeringToken is a label that can be added to a secret to allow it to be watched
+	// by the peering controllers.
+	labelPeeringToken = "consul.hashicorp.com/peering-token"
+
+	// injected is used as the annotation value for keyInjectStatus and annotationInjected.
 	injected = "injected"
+
+	// enabled is used as the annotation value for keyTransparentProxyStatus.
+	enabled = "enabled"
 
 	// endpointsController is the value for keyManagedBy.
 	managedByValue = "consul-k8s-endpoints-controller"

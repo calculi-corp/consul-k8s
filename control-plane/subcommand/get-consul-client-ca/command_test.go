@@ -2,7 +2,6 @@ package getconsulclientca
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 	"sync"
@@ -42,6 +41,14 @@ func TestRun_FlagsValidation(t *testing.T) {
 			flags: []string{
 				"-output-file=output.pem",
 				"-server-addr=foo.com",
+			},
+			expErr: "-consul-api-timeout must be set to a value greater than 0",
+		},
+		{
+			flags: []string{
+				"-output-file=output.pem",
+				"-server-addr=foo.com",
+				"-consul-api-timeout=5s",
 				"-log-level=invalid-log-level",
 			},
 			expErr: "unknown log level: invalid-log-level",
@@ -67,7 +74,7 @@ func TestRun_FlagsValidation(t *testing.T) {
 // write it to a file.
 func TestRun(t *testing.T) {
 	t.Parallel()
-	outputFile, err := ioutil.TempFile("", "ca")
+	outputFile, err := os.CreateTemp("", "ca")
 	require.NoError(t, err)
 	defer os.Remove(outputFile.Name())
 
@@ -96,6 +103,7 @@ func TestRun(t *testing.T) {
 		"-server-port", strings.Split(a.HTTPSAddr, ":")[1],
 		"-ca-file", caFile,
 		"-output-file", outputFile.Name(),
+		"-consul-api-timeout", "5s",
 	})
 	require.Equal(t, 0, exitCode, ui.ErrorWriter.String())
 
@@ -119,7 +127,7 @@ func TestRun(t *testing.T) {
 	expectedCARoot := roots.Roots[0].RootCertPEM
 
 	// read the file contents
-	actualCARoot, err := ioutil.ReadFile(outputFile.Name())
+	actualCARoot, err := os.ReadFile(outputFile.Name())
 	require.NoError(t, err)
 	require.Equal(t, expectedCARoot, string(actualCARoot))
 }
@@ -128,7 +136,7 @@ func TestRun(t *testing.T) {
 // we continue to poll it until it comes up.
 func TestRun_ConsulServerAvailableLater(t *testing.T) {
 	t.Parallel()
-	outputFile, err := ioutil.TempFile("", "ca")
+	outputFile, err := os.CreateTemp("", "ca")
 	require.NoError(t, err)
 	defer os.Remove(outputFile.Name())
 
@@ -178,6 +186,7 @@ func TestRun_ConsulServerAvailableLater(t *testing.T) {
 		"-server-port", fmt.Sprintf("%d", randomPorts[2]),
 		"-ca-file", caFile,
 		"-output-file", outputFile.Name(),
+		"-consul-api-timeout", "5s",
 	})
 	require.Equal(t, 0, exitCode, ui.ErrorWriter)
 
@@ -204,7 +213,7 @@ func TestRun_ConsulServerAvailableLater(t *testing.T) {
 	})
 
 	// check that the file contents match the actual CA
-	actualCARoot, err := ioutil.ReadFile(outputFile.Name())
+	actualCARoot, err := os.ReadFile(outputFile.Name())
 	require.NoError(t, err)
 	require.Equal(t, expectedCARoot, string(actualCARoot))
 }
@@ -214,7 +223,7 @@ func TestRun_ConsulServerAvailableLater(t *testing.T) {
 // the inactive one.
 func TestRun_GetsOnlyActiveRoot(t *testing.T) {
 	t.Parallel()
-	outputFile, err := ioutil.TempFile("", "ca")
+	outputFile, err := os.CreateTemp("", "ca")
 	require.NoError(t, err)
 	defer os.Remove(outputFile.Name())
 
@@ -268,6 +277,7 @@ func TestRun_GetsOnlyActiveRoot(t *testing.T) {
 		"-server-port", strings.Split(a.HTTPSAddr, ":")[1],
 		"-ca-file", caFile,
 		"-output-file", outputFile.Name(),
+		"-consul-api-timeout", "5s",
 	})
 	require.Equal(t, 0, exitCode)
 
@@ -287,7 +297,7 @@ func TestRun_GetsOnlyActiveRoot(t *testing.T) {
 	})
 
 	// read the file contents
-	actualCARoot, err := ioutil.ReadFile(outputFile.Name())
+	actualCARoot, err := os.ReadFile(outputFile.Name())
 	require.NoError(t, err)
 	require.Equal(t, expectedCARoot, string(actualCARoot))
 }
@@ -296,7 +306,7 @@ func TestRun_GetsOnlyActiveRoot(t *testing.T) {
 // it uses the provider to get the address of the server.
 func TestRun_WithProvider(t *testing.T) {
 	t.Parallel()
-	outputFile, err := ioutil.TempFile("", "ca")
+	outputFile, err := os.CreateTemp("", "ca")
 	require.NoError(t, err)
 	defer os.Remove(outputFile.Name())
 
@@ -335,6 +345,7 @@ func TestRun_WithProvider(t *testing.T) {
 		"-server-port", strings.Split(a.HTTPSAddr, ":")[1],
 		"-output-file", outputFile.Name(),
 		"-ca-file", caFile,
+		"-consul-api-timeout", "5s",
 	})
 	require.Equal(t, 0, exitCode, ui.ErrorWriter.String())
 
@@ -360,7 +371,7 @@ func TestRun_WithProvider(t *testing.T) {
 	expectedCARoot := roots.Roots[0].RootCertPEM
 
 	// read the file contents
-	actualCARoot, err := ioutil.ReadFile(outputFile.Name())
+	actualCARoot, err := os.ReadFile(outputFile.Name())
 	require.NoError(t, err)
 	require.Equal(t, expectedCARoot, string(actualCARoot))
 }

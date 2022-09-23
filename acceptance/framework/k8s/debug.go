@@ -3,7 +3,6 @@ package k8s
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,7 +45,7 @@ func WritePodsDebugInfoIfFailed(t *testing.T, kubectlOptions *k8s.KubectlOptions
 
 			// Write logs or err to file name <pod.Name>.log
 			logFilename := filepath.Join(testDebugDirectory, fmt.Sprintf("%s.log", pod.Name))
-			require.NoError(t, ioutil.WriteFile(logFilename, []byte(logs), 0600))
+			require.NoError(t, os.WriteFile(logFilename, []byte(logs), 0600))
 
 			// Describe pod and write it to a file.
 			writeResourceInfoToFile(t, pod.Name, "pod", testDebugDirectory, kubectlOptions)
@@ -71,8 +70,8 @@ func WritePodsDebugInfoIfFailed(t *testing.T, kubectlOptions *k8s.KubectlOptions
 			// Write config/clusters or err to file name <pod.Name>-envoy-[configdump/clusters].json
 			configDumpFilename := filepath.Join(testDebugDirectory, fmt.Sprintf("%s-envoy-configdump.json", mpod.Name))
 			clustersFilename := filepath.Join(testDebugDirectory, fmt.Sprintf("%s-envoy-clusters.json", mpod.Name))
-			require.NoError(t, ioutil.WriteFile(configDumpFilename, []byte(configDump), 0600))
-			require.NoError(t, ioutil.WriteFile(clustersFilename, []byte(clusters), 0600))
+			require.NoError(t, os.WriteFile(configDumpFilename, []byte(configDump), 0600))
+			require.NoError(t, os.WriteFile(clustersFilename, []byte(clusters), 0600))
 
 		}
 
@@ -108,6 +107,28 @@ func WritePodsDebugInfoIfFailed(t *testing.T, kubectlOptions *k8s.KubectlOptions
 				writeResourceInfoToFile(t, deployment.Name, "deployment", testDebugDirectory, kubectlOptions)
 			}
 		}
+
+		// Describe any replicasets.
+		replicasets, err := client.AppsV1().ReplicaSets(kubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: labelSelector})
+		if err != nil {
+			logger.Log(t, "unable to get replicasets", "err", err)
+		} else {
+			for _, replicaset := range replicasets.Items {
+				// Describe replicaset and write it to a file.
+				writeResourceInfoToFile(t, replicaset.Name, "replicaset", testDebugDirectory, kubectlOptions)
+			}
+		}
+
+		// Describe any services.
+		services, err := client.CoreV1().Services(kubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: labelSelector})
+		if err != nil {
+			logger.Log(t, "unable to get services", "err", err)
+		} else {
+			for _, service := range services.Items {
+				// Describe service and write it to a file.
+				writeResourceInfoToFile(t, service.Name, "service", testDebugDirectory, kubectlOptions)
+			}
+		}
 	}
 }
 
@@ -124,5 +145,5 @@ func writeResourceInfoToFile(t *testing.T, resourceName, resourceType, testDebug
 		desc = fmt.Sprintf("Error describing %s/%s: %s: %s", resourceType, resourceType, err, desc)
 	}
 	descFilename := filepath.Join(testDebugDirectory, fmt.Sprintf("%s-%s.txt", resourceName, resourceType))
-	require.NoError(t, ioutil.WriteFile(descFilename, []byte(desc), 0600))
+	require.NoError(t, os.WriteFile(descFilename, []byte(desc), 0600))
 }

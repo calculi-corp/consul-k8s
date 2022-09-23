@@ -20,6 +20,16 @@ load _helpers
   [ "${actual}" = "true" ]
 }
 
+@test "meshGateway/Deployment: consul-sidecar uses -consul-api-timeout" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -s '.[0].spec.template.spec.containers[1].command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
 #--------------------------------------------------------------------
 # prerequisites
 
@@ -272,8 +282,33 @@ key2: value2' \
 }
 
 #--------------------------------------------------------------------
-# hostNetwork
+# topologySpreadConstraints
 
+@test "meshGateway/Deployment: topologySpreadConstraints not set by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec | .topologySpreadConstraints? == null' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "meshGateway/Deployment: topologySpreadConstraints can be set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'meshGateway.topologySpreadConstraints=foobar' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.spec.topologySpreadConstraints == "foobar"' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# hostNetwork
 
 @test "meshGateway/Deployment: hostNetwork is not set by default" {
   cd `chart_dir`
@@ -335,7 +370,8 @@ key2: value2' \
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
       yq -r '.spec.template.spec.containers[0].image' | tee /dev/stderr)
-  [ "${actual}" = "envoyproxy/envoy-alpine:v1.20.2" ]
+  [[ "${actual}" =~ "envoyproxy/envoy:v" ]]
+
 }
 
 @test "meshGateway/Deployment: setting meshGateway.imageEnvoy fails" {
@@ -648,6 +684,10 @@ key2: value2' \
       yq '[.env[2].value] | any(contains("http://$(HOST_IP):8500"))' | tee /dev/stderr)
       echo $actual
   [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
 }
 
 @test "meshGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled" {
@@ -681,6 +721,10 @@ key2: value2' \
   local actual=$(echo $object |
       yq '.volumeMounts[2] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
 }
 
 @test "meshGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command with Partitions enabled" {
@@ -702,7 +746,7 @@ key2: value2' \
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
-      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method"))' | tee /dev/stderr)
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
@@ -724,6 +768,10 @@ key2: value2' \
 
   local actual=$(echo $object |
       yq '.volumeMounts[2] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -758,6 +806,10 @@ key2: value2' \
 
   local actual=$(echo $object |
       yq '.volumeMounts[2] | any(contains("consul-auto-encrypt-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -800,11 +852,15 @@ key2: value2' \
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
-      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
       yq -r '.command | any(contains("-primary-datacenter=dc1"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -1060,7 +1116,7 @@ key2: value2' \
   -log-level=info \
   -log-json=false \
   -k8s-namespace=default \
-  -name=RELEASE-NAME-consul-mesh-gateway \
+  -name=release-name-consul-mesh-gateway \
   -output-file=/tmp/address.txt
 WAN_ADDR="$(cat /tmp/address.txt)"
 WAN_PORT="443"
@@ -1111,7 +1167,8 @@ EOF
   exp='consul-k8s-control-plane acl-init \
   -component-name=mesh-gateway \
   -token-sink-file=/consul/service/acl-token \
-  -acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method \
+  -acl-auth-method=release-name-consul-k8s-component-auth-method \
+  -consul-api-timeout=5s \
   -log-level=info \
   -log-json=false
 
@@ -1119,7 +1176,7 @@ consul-k8s-control-plane service-address \
   -log-level=info \
   -log-json=false \
   -k8s-namespace=default \
-  -name=RELEASE-NAME-consul-mesh-gateway \
+  -name=release-name-consul-mesh-gateway \
   -output-file=/tmp/address.txt
 WAN_ADDR="$(cat /tmp/address.txt)"
 WAN_PORT="443"
@@ -1173,7 +1230,7 @@ EOF
   -log-level=info \
   -log-json=false \
   -k8s-namespace=default \
-  -name=RELEASE-NAME-consul-mesh-gateway \
+  -name=release-name-consul-mesh-gateway \
   -output-file=/tmp/address.txt
 WAN_ADDR="$(cat /tmp/address.txt)"
 WAN_PORT="443"
@@ -1452,7 +1509,7 @@ EOF
   -log-level=info \
   -log-json=false \
   -k8s-namespace=default \
-  -name=RELEASE-NAME-consul-mesh-gateway \
+  -name=release-name-consul-mesh-gateway \
   -output-file=/tmp/address.txt
 WAN_ADDR="$(cat /tmp/address.txt)"
 WAN_PORT="443"
@@ -1571,7 +1628,7 @@ EOF
   -log-level=info \
   -log-json=false \
   -k8s-namespace=default \
-  -name=RELEASE-NAME-consul-mesh-gateway \
+  -name=release-name-consul-mesh-gateway \
   -output-file=/tmp/address.txt
 WAN_ADDR="$(cat /tmp/address.txt)"
 WAN_PORT="443"
@@ -1623,7 +1680,7 @@ EOF
   -log-level=info \
   -log-json=false \
   -k8s-namespace=default \
-  -name=RELEASE-NAME-consul-mesh-gateway \
+  -name=release-name-consul-mesh-gateway \
   -output-file=/tmp/address.txt
 WAN_ADDR="$(cat /tmp/address.txt)"
 WAN_PORT="443"
@@ -1729,6 +1786,37 @@ EOF
       --set 'meshGateway.enabled=true' .
   [ "$status" -eq 1 ]
   [[ "$output" =~ "global.enableConsulNamespaces must be true if global.adminPartitions.enabled=true" ]]
+}
+
+#--------------------------------------------------------------------
+# get-auto-encrypt-client-ca
+
+@test "meshGateway/Deployment: get-auto-encrypt-client-ca uses server's stateful set address by default and passes ca cert" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/mesh-gateway-deployment.yaml  \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "get-auto-encrypt-client-ca").command | join(" ")' | tee /dev/stderr)
+
+  # check server address
+  actual=$(echo $command | jq ' . | contains("-server-addr=release-name-consul-server")')
+  [ "${actual}" = "true" ]
+
+  # check server port
+  actual=$(echo $command | jq ' . | contains("-server-port=8501")')
+  [ "${actual}" = "true" ]
+
+  # check server's CA cert
+  actual=$(echo $command | jq ' . | contains("-ca-file=/consul/tls/ca/tls.crt")')
+  [ "${actual}" = "true" ]
+
+  # check consul-api-timeout
+  actual=$(echo $command | jq ' . | contains("-consul-api-timeout=5s")')
+  [ "${actual}" = "true" ]
 }
 
 #--------------------------------------------------------------------

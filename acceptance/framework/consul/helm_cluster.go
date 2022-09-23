@@ -3,6 +3,7 @@ package consul
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +86,7 @@ func NewHelmCluster(
 		KubectlOptions: ctx.KubectlOptions(t),
 		Logger:         logger,
 		ExtraArgs:      extraArgs,
+		Version:        cfg.HelmChartVersion,
 	}
 	return &HelmCluster{
 		ctx:                ctx,
@@ -109,7 +111,18 @@ func (h *HelmCluster) Create(t *testing.T) {
 	// Fail if there are any existing installations of the Helm chart.
 	helpers.CheckForPriorInstallations(t, h.kubernetesClient, h.helmOptions, "consul-helm", "chart=consul-helm")
 
-	helm.Install(t, h.helmOptions, config.HelmChartPath, h.releaseName)
+	chartName := config.HelmChartPath
+	if h.helmOptions.Version != config.HelmChartPath {
+		chartName = "hashicorp/consul"
+		helm.AddRepo(t, h.helmOptions, "hashicorp", "https://helm.releases.hashicorp.com")
+		// Ignoring the error from `helm repo update` as it could fail due to stale cache or unreachable servers and we're
+		// asserting a chart version on Install which would fail in an obvious way should this not succeed.
+		_, err := helm.RunHelmCommandAndGetOutputE(t, &helm.Options{}, "repo", "update")
+		if err != nil {
+			logger.Logf(t, "Unable to update helm repository, proceeding anyway: %s.", err)
+		}
+	}
+	helm.Install(t, h.helmOptions, chartName, h.releaseName)
 
 	k8s.WaitForAllPodsToBeReady(t, h.kubernetesClient, h.helmOptions.KubectlOptions.Namespace, fmt.Sprintf("release=%s", h.releaseName))
 }
@@ -123,100 +136,236 @@ func (h *HelmCluster) Destroy(t *testing.T) {
 	// always idempotently clean up resources in the cluster.
 	_ = helm.DeleteE(t, h.helmOptions, h.releaseName, false)
 
-	// Force delete any pods that have h.releaseName in their name because sometimes
-	// graceful termination takes a long time and since this is an uninstall
-	// we don't care that they're stopped gracefully.
-	pods, err := h.kubernetesClient.CoreV1().Pods(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
-	require.NoError(t, err)
-	for _, pod := range pods.Items {
-		if strings.Contains(pod.Name, h.releaseName) {
-			var gracePeriod int64 = 0
-			err := h.kubernetesClient.CoreV1().Pods(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{GracePeriodSeconds: &gracePeriod})
-			if !errors.IsNotFound(err) {
-				require.NoError(t, err)
+	// Retry because sometimes certain resources (like PVC) take time to delete
+	// in cloud providers.
+	retry.RunWith(&retry.Counter{Wait: 1 * time.Second, Count: 600}, t, func(r *retry.R) {
+		// Force delete any pods that have h.releaseName in their name because sometimes
+		// graceful termination takes a long time and since this is an uninstall
+		// we don't care that they're stopped gracefully.
+		pods, err := h.kubernetesClient.CoreV1().Pods(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(t, err)
+		for _, pod := range pods.Items {
+			if strings.Contains(pod.Name, h.releaseName) {
+				var gracePeriod int64 = 0
+				err := h.kubernetesClient.CoreV1().Pods(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), pod.Name, metav1.DeleteOptions{GracePeriodSeconds: &gracePeriod})
+				if !errors.IsNotFound(err) {
+					require.NoError(t, err)
+				}
 			}
 		}
-	}
 
-	// Delete PVCs.
-	err = h.kubernetesClient.CoreV1().PersistentVolumeClaims(h.helmOptions.KubectlOptions.Namespace).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
-	require.NoError(t, err)
+		// Delete PVCs.
+		err = h.kubernetesClient.CoreV1().PersistentVolumeClaims(h.helmOptions.KubectlOptions.Namespace).DeleteCollection(context.Background(), metav1.DeleteOptions{}, metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(t, err)
 
-	// Delete any serviceaccounts that have h.releaseName in their name.
-	sas, err := h.kubernetesClient.CoreV1().ServiceAccounts(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
-	require.NoError(t, err)
-	for _, sa := range sas.Items {
-		if strings.Contains(sa.Name, h.releaseName) {
-			err := h.kubernetesClient.CoreV1().ServiceAccounts(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), sa.Name, metav1.DeleteOptions{})
-			if !errors.IsNotFound(err) {
-				require.NoError(t, err)
+		// Delete any serviceaccounts that have h.releaseName in their name.
+		sas, err := h.kubernetesClient.CoreV1().ServiceAccounts(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(t, err)
+		for _, sa := range sas.Items {
+			if strings.Contains(sa.Name, h.releaseName) {
+				err := h.kubernetesClient.CoreV1().ServiceAccounts(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), sa.Name, metav1.DeleteOptions{})
+				if !errors.IsNotFound(err) {
+					require.NoError(t, err)
+				}
 			}
 		}
-	}
 
-	// Delete any roles that have h.releaseName in their name.
-	roles, err := h.kubernetesClient.RbacV1().Roles(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
-	require.NoError(t, err)
-	for _, role := range roles.Items {
-		if strings.Contains(role.Name, h.releaseName) {
-			err := h.kubernetesClient.RbacV1().Roles(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), role.Name, metav1.DeleteOptions{})
-			if !errors.IsNotFound(err) {
-				require.NoError(t, err)
+		// Delete any roles that have h.releaseName in their name.
+		roles, err := h.kubernetesClient.RbacV1().Roles(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(t, err)
+		for _, role := range roles.Items {
+			if strings.Contains(role.Name, h.releaseName) {
+				err := h.kubernetesClient.RbacV1().Roles(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), role.Name, metav1.DeleteOptions{})
+				if !errors.IsNotFound(err) {
+					require.NoError(t, err)
+				}
 			}
 		}
-	}
 
-	// Delete any rolebindings that have h.releaseName in their name.
-	roleBindings, err := h.kubernetesClient.RbacV1().RoleBindings(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
-	require.NoError(t, err)
-	for _, roleBinding := range roleBindings.Items {
-		if strings.Contains(roleBinding.Name, h.releaseName) {
-			err := h.kubernetesClient.RbacV1().RoleBindings(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), roleBinding.Name, metav1.DeleteOptions{})
-			if !errors.IsNotFound(err) {
-				require.NoError(t, err)
+		// Delete any rolebindings that have h.releaseName in their name.
+		roleBindings, err := h.kubernetesClient.RbacV1().RoleBindings(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(t, err)
+		for _, roleBinding := range roleBindings.Items {
+			if strings.Contains(roleBinding.Name, h.releaseName) {
+				err := h.kubernetesClient.RbacV1().RoleBindings(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), roleBinding.Name, metav1.DeleteOptions{})
+				if !errors.IsNotFound(err) {
+					require.NoError(t, err)
+				}
 			}
 		}
-	}
 
-	// Delete any secrets that have h.releaseName in their name.
-	secrets, err := h.kubernetesClient.CoreV1().Secrets(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{})
-	require.NoError(t, err)
-	for _, secret := range secrets.Items {
-		if strings.Contains(secret.Name, h.releaseName) {
-			err := h.kubernetesClient.CoreV1().Secrets(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), secret.Name, metav1.DeleteOptions{})
-			if !errors.IsNotFound(err) {
-				require.NoError(t, err)
+		// Delete any secrets that have h.releaseName in their name.
+		secrets, err := h.kubernetesClient.CoreV1().Secrets(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{})
+		require.NoError(t, err)
+		for _, secret := range secrets.Items {
+			if strings.Contains(secret.Name, h.releaseName) {
+				err := h.kubernetesClient.CoreV1().Secrets(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), secret.Name, metav1.DeleteOptions{})
+				if !errors.IsNotFound(err) {
+					require.NoError(t, err)
+				}
 			}
 		}
-	}
 
-	// Delete any jobs that have h.releaseName in their name.
-	jobs, err := h.kubernetesClient.BatchV1().Jobs(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
-	require.NoError(t, err)
-	for _, job := range jobs.Items {
-		if strings.Contains(job.Name, h.releaseName) {
-			err := h.kubernetesClient.BatchV1().Jobs(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), job.Name, metav1.DeleteOptions{})
-			if !errors.IsNotFound(err) {
-				require.NoError(t, err)
+		// Delete any jobs that have h.releaseName in their name.
+		jobs, err := h.kubernetesClient.BatchV1().Jobs(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(t, err)
+		for _, job := range jobs.Items {
+			if strings.Contains(job.Name, h.releaseName) {
+				err := h.kubernetesClient.BatchV1().Jobs(h.helmOptions.KubectlOptions.Namespace).Delete(context.Background(), job.Name, metav1.DeleteOptions{})
+				if !errors.IsNotFound(err) {
+					require.NoError(t, err)
+				}
 			}
 		}
-	}
+
+		// Verify all Consul Pods are deleted.
+		pods, err = h.kubernetesClient.CoreV1().Pods(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(r, err)
+		for _, pod := range pods.Items {
+			if strings.Contains(pod.Name, h.releaseName) {
+				r.Errorf("Found pod which should have been deleted: %s", pod.Name)
+			}
+		}
+
+		// Verify all Consul PVCs are deleted.
+		pvcs, err := h.kubernetesClient.CoreV1().PersistentVolumeClaims(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(r, err)
+		require.Len(r, pvcs.Items, 0)
+
+		// Verify all Consul Service Accounts are deleted.
+		sas, err = h.kubernetesClient.CoreV1().ServiceAccounts(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(r, err)
+		for _, sa := range sas.Items {
+			if strings.Contains(sa.Name, h.releaseName) {
+				r.Errorf("Found service account which should have been deleted: %s", sa.Name)
+			}
+		}
+
+		// Verify all Consul Roles are deleted.
+		roles, err = h.kubernetesClient.RbacV1().Roles(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(r, err)
+		for _, role := range roles.Items {
+			if strings.Contains(role.Name, h.releaseName) {
+				r.Errorf("Found role which should have been deleted: %s", role.Name)
+			}
+		}
+
+		// Verify all Consul Role Bindings are deleted.
+		roleBindings, err = h.kubernetesClient.RbacV1().RoleBindings(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(r, err)
+		for _, roleBinding := range roleBindings.Items {
+			if strings.Contains(roleBinding.Name, h.releaseName) {
+				r.Errorf("Found role binding which should have been deleted: %s", roleBinding.Name)
+			}
+		}
+
+		// Verify all Consul Secrets are deleted.
+		secrets, err = h.kubernetesClient.CoreV1().Secrets(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{})
+		require.NoError(r, err)
+		for _, secret := range secrets.Items {
+			if strings.Contains(secret.Name, h.releaseName) {
+				r.Errorf("Found secret which should have been deleted: %s", secret.Name)
+			}
+		}
+
+		// Verify all Consul Jobs are deleted.
+		jobs, err = h.kubernetesClient.BatchV1().Jobs(h.helmOptions.KubectlOptions.Namespace).List(context.Background(), metav1.ListOptions{LabelSelector: "release=" + h.releaseName})
+		require.NoError(r, err)
+		for _, job := range jobs.Items {
+			if strings.Contains(job.Name, h.releaseName) {
+				r.Errorf("Found job which should have been deleted: %s", job.Name)
+			}
+		}
+	})
 }
 
 func (h *HelmCluster) Upgrade(t *testing.T, helmValues map[string]string) {
 	t.Helper()
 
 	helpers.MergeMaps(h.helmOptions.SetValues, helmValues)
-	helm.Upgrade(t, h.helmOptions, config.HelmChartPath, h.releaseName)
+	chartName := "hashicorp/consul"
+	if h.helmOptions.Version == config.HelmChartPath {
+		chartName = config.HelmChartPath
+	}
+	helm.Upgrade(t, h.helmOptions, chartName, h.releaseName)
 	k8s.WaitForAllPodsToBeReady(t, h.kubernetesClient, h.helmOptions.KubectlOptions.Namespace, fmt.Sprintf("release=%s", h.releaseName))
 }
 
-func (h *HelmCluster) SetupConsulClient(t *testing.T, secure bool) *api.Client {
+func (h *HelmCluster) CreatePortForwardTunnel(t *testing.T, remotePort int) string {
+	serverPod := fmt.Sprintf("%s-consul-server-0", h.releaseName)
+	return h.CreatePortForwardTunnelToResourcePort(t, serverPod, remotePort)
+}
+
+func (h *HelmCluster) CreatePortForwardTunnelToResourcePort(t *testing.T, resourceName string, remotePort int) string {
+	localPort := terratestk8s.GetAvailablePort(t)
+	tunnel := terratestk8s.NewTunnelWithLogger(
+		h.helmOptions.KubectlOptions,
+		terratestk8s.ResourceTypePod,
+		resourceName,
+		localPort,
+		remotePort,
+		h.logger)
+
+	// Retry creating the port forward since it can fail occasionally.
+	retry.RunWith(&retry.Counter{Wait: 1 * time.Second, Count: 3}, t, func(r *retry.R) {
+		// NOTE: It's okay to pass in `t` to ForwardPortE despite being in a retry
+		// because we're using ForwardPortE (not ForwardPort) so the `t` won't
+		// get used to fail the test, just for logging.
+		require.NoError(r, tunnel.ForwardPortE(t))
+	})
+
+	doneChan := make(chan bool)
+
+	t.Cleanup(func() {
+		close(doneChan)
+	})
+
+	go h.monitorPortForwardedServer(t, localPort, tunnel, doneChan, resourceName, remotePort)
+
+	return fmt.Sprintf("127.0.0.1:%d", localPort)
+}
+
+func (h *HelmCluster) monitorPortForwardedServer(t *testing.T, port int, tunnel *terratestk8s.Tunnel, doneChan chan bool, resourceName string, remotePort int) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-doneChan:
+			logger.Log(t, "stopping monitor of the port-forwarded server")
+			tunnel.Close()
+			return
+		case <-ticker.C:
+			conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			if err != nil {
+				logger.Log(t, "lost connection to port-forwarded server; restarting port-forwarding", "port", port)
+				tunnel.Close()
+				tunnel = terratestk8s.NewTunnelWithLogger(
+					h.helmOptions.KubectlOptions,
+					terratestk8s.ResourceTypePod,
+					resourceName,
+					port,
+					remotePort,
+					h.logger)
+				err = tunnel.ForwardPortE(t)
+				if err != nil {
+					// If we couldn't establish a port forwarding channel, continue, so we can try again.
+					continue
+				}
+			}
+			if conn != nil {
+				// Ignore error because we don't care if connection is closed successfully or not.
+				_ = conn.Close()
+			}
+		}
+	}
+}
+
+func (h *HelmCluster) SetupConsulClient(t *testing.T, secure bool) (client *api.Client, configAddress string) {
 	t.Helper()
 
 	namespace := h.helmOptions.KubectlOptions.Namespace
 	config := api.DefaultConfig()
-	localPort := terratestk8s.GetAvailablePort(t)
 	remotePort := 8500 // use non-secure by default
 
 	if secure {
@@ -250,32 +399,11 @@ func (h *HelmCluster) SetupConsulClient(t *testing.T, secure bool) *api.Client {
 		}
 	}
 
-	serverPod := fmt.Sprintf("%s-consul-server-0", h.releaseName)
-	tunnel := terratestk8s.NewTunnelWithLogger(
-		h.helmOptions.KubectlOptions,
-		terratestk8s.ResourceTypePod,
-		serverPod,
-		localPort,
-		remotePort,
-		h.logger)
-
-	// Retry creating the port forward since it can fail occasionally.
-	retry.RunWith(&retry.Counter{Wait: 1 * time.Second, Count: 3}, t, func(r *retry.R) {
-		// NOTE: It's okay to pass in `t` to ForwardPortE despite being in a retry
-		// because we're using ForwardPortE (not ForwardPort) so the `t` won't
-		// get used to fail the test, just for logging.
-		require.NoError(r, tunnel.ForwardPortE(t))
-	})
-
-	t.Cleanup(func() {
-		tunnel.Close()
-	})
-
-	config.Address = fmt.Sprintf("127.0.0.1:%d", localPort)
+	config.Address = h.CreatePortForwardTunnel(t, remotePort)
 	consulClient, err := api.NewClient(config)
 	require.NoError(t, err)
 
-	return consulClient
+	return consulClient, config.Address
 }
 
 // configurePodSecurityPolicies creates a simple pod security policy, a cluster role to allow access to the PSP,
@@ -438,7 +566,6 @@ func configureSCCs(t *testing.T, client kubernetes.Interface, cfg *config.TestCo
 func defaultValues() map[string]string {
 	values := map[string]string{
 		"server.replicas":              "1",
-		"server.bootstrapExpect":       "1",
 		"connectInject.envoyExtraArgs": "--log-level debug",
 		"connectInject.logLevel":       "debug",
 		// Disable DNS since enabling it changes the policy for the anonymous token,

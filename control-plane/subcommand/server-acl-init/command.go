@@ -5,7 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -21,6 +21,8 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/mitchellh/cli"
 	"github.com/mitchellh/mapstructure"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -66,6 +68,7 @@ type Command struct {
 	flagConsulCACert        string
 	flagConsulTLSServerName string
 	flagUseHTTPS            bool
+	flagConsulAPITimeout    time.Duration
 
 	// Flags for ACL replication.
 	flagCreateACLReplicationToken bool
@@ -75,6 +78,9 @@ type Command struct {
 	flagEnablePartitions   bool   // true if Admin Partitions are enabled
 	flagPartitionName      string // name of the Admin Partition
 	flagPartitionTokenFile string
+
+	// Flags to support peering.
+	flagEnablePeering bool // true if Cluster Peering is enabled
 
 	// Flags to support namespaces.
 	flagEnableNamespaces                 bool   // Use namespacing on all components
@@ -178,6 +184,9 @@ func (c *Command) init() {
 	c.flags.StringVar(&c.flagPartitionTokenFile, "partition-token-file", "",
 		"[Enterprise Only] Path to file containing ACL token to be used in non-default partitions.")
 
+	c.flags.BoolVar(&c.flagEnablePeering, "enable-peering", false,
+		"Enables Cluster Peering.")
+
 	c.flags.BoolVar(&c.flagEnableNamespaces, "enable-namespaces", false,
 		"[Enterprise Only] Enables namespaces, in either a single Consul namespace or mirrored [Enterprise only feature]")
 	c.flags.StringVar(&c.flagConsulSyncDestinationNamespace, "consul-sync-destination-namespace", consulDefaultNamespace,
@@ -215,6 +224,9 @@ func (c *Command) init() {
 			"\"debug\", \"info\", \"warn\", and \"error\".")
 	c.flags.BoolVar(&c.flagLogJSON, "log-json", false,
 		"Enable or disable JSON output format for logging.")
+
+	c.flags.DurationVar(&c.flagConsulAPITimeout, "consul-api-timeout", 0,
+		"The time in seconds that the consul API client will wait for a response from the API before cancelling the request.")
 
 	c.k8s = &k8sflags.K8SFlags{}
 	flags.Merge(c.flags, c.k8s.Flags())
@@ -345,20 +357,19 @@ func (c *Command) Run(args []string) int {
 
 	// For all of the next operations we'll need a Consul client.
 	serverAddr := fmt.Sprintf("%s:%d", serverAddresses[0], c.flagServerPort)
-	clientConfig := &api.Config{
-		Address: serverAddr,
-		Scheme:  scheme,
-		Token:   bootstrapToken,
-		TLSConfig: api.TLSConfig{
-			Address: c.flagConsulTLSServerName,
-			CAFile:  c.flagConsulCACert,
-		},
+	clientConfig := api.DefaultConfig()
+	clientConfig.Address = serverAddr
+	clientConfig.Scheme = scheme
+	clientConfig.Token = bootstrapToken
+	clientConfig.TLSConfig = api.TLSConfig{
+		Address: c.flagConsulTLSServerName,
+		CAFile:  c.flagConsulCACert,
 	}
 
 	if c.flagEnablePartitions {
 		clientConfig.Partition = c.flagPartitionName
 	}
-	consulClient, err := consul.NewClient(clientConfig)
+	consulClient, err := consul.NewClient(clientConfig, c.flagConsulAPITimeout)
 	if err != nil {
 		c.log.Error(fmt.Sprintf("Error creating Consul client for addr %q: %s", serverAddr, err))
 		return 1
@@ -475,7 +486,7 @@ func (c *Command) Run(args []string) int {
 		if c.flagEnablePartitions {
 			anonTokenConfig.Partition = consulDefaultPartition
 		}
-		anonTokenClient, err := consul.NewClient(anonTokenConfig)
+		anonTokenClient, err := consul.NewClient(anonTokenConfig, c.flagConsulAPITimeout)
 		if err != nil {
 			c.log.Error(err.Error())
 			return 1
@@ -731,17 +742,17 @@ type gatewayRulesGenerator func(name, namespace string) (string, error)
 type ConfigureGatewayParams struct {
 	// GatewayType specifies whether it is an ingress or terminating gateway.
 	GatewayType string
-	//GatewayNames is the collection of gateways that have been specified.
+	// GatewayNames is the collection of gateways that have been specified.
 	GatewayNames []string
-	//AuthMethodName is the authmethod for which to register the binding rules and policies for the gateways
+	// AuthMethodName is the authmethod for which to register the binding rules and policies for the gateways
 	AuthMethodName string
-	//RuleGenerator is the function that supplies the rules that will be added to the policy.
+	// RuleGenerator is the function that supplies the rules that will be added to the policy.
 	RulesGenerator gatewayRulesGenerator
-	//ConsulDC is the name of the DC where the gateways will be registered
+	// ConsulDC is the name of the DC where the gateways will be registered
 	ConsulDC string
-	//PrimaryDC is the name of the Primary Data Center
+	// PrimaryDC is the name of the Primary Data Center
 	PrimaryDC string
-	//Primary specifies whether the ConsulDC is the Primary Data Center
+	// Primary specifies whether the ConsulDC is the Primary Data Center
 	Primary bool
 }
 
@@ -752,7 +763,7 @@ func (c *Command) configureGateway(gatewayParams ConfigureGatewayParams, consulC
 	for _, name := range gatewayParams.GatewayNames {
 		if name == "" {
 			errMessage := fmt.Sprintf("%s gateway name cannot be empty",
-				strings.Title(strings.ToLower(gatewayParams.GatewayType)))
+				cases.Title(language.English).String(gatewayParams.GatewayType))
 			c.log.Error(errMessage)
 			return errors.New(errMessage)
 		}
@@ -943,7 +954,7 @@ func (c *Command) validateFlags() error {
 	// For the Consul node name to be discoverable via DNS, it must contain only
 	// dashes and alphanumeric characters. Length is also constrained.
 	// These restrictions match those defined in Consul's agent definition.
-	var invalidDnsRe = regexp.MustCompile(`[^A-Za-z0-9\\-]+`)
+	invalidDnsRe := regexp.MustCompile(`[^A-Za-z0-9\\-]+`)
 	const maxDNSLabelLength = 63
 
 	if invalidDnsRe.MatchString(c.flagSyncConsulNodeName) {
@@ -967,12 +978,17 @@ func (c *Command) validateFlags() error {
 	if !c.flagEnablePartitions && c.flagPartitionName != "" {
 		return errors.New("-enable-partitions must be 'true' if -partition is set")
 	}
+
+	if c.flagConsulAPITimeout <= 0 {
+		return errors.New("-consul-api-timeout must be set to a value greater than 0")
+	}
+
 	return nil
 }
 
 func loadTokenFromFile(tokenFile string) (string, error) {
 	// Load the bootstrap token from file.
-	tokenBytes, err := ioutil.ReadFile(tokenFile)
+	tokenBytes, err := os.ReadFile(tokenFile)
 	if err != nil {
 		return "", fmt.Errorf("unable to read token from file %q: %s", tokenFile, err)
 	}

@@ -33,6 +33,9 @@ spec:
         {{- end }}
       annotations:
         "consul.hashicorp.com/connect-inject": "false"
+        {{- if .Values.syncCatalog.annotations }}
+        {{- tpl .Values.syncCatalog.annotations . | nindent 8 }}
+        {{- end }}
         {{- if (and .Values.global.secretsBackend.vault.enabled .Values.global.tls.enabled) }}
         "vault.hashicorp.com/agent-init-first": "true"
         "vault.hashicorp.com/agent-inject": "true"
@@ -132,6 +135,7 @@ spec:
             - "-ec"
             - |
               consul-k8s-control-plane sync-catalog \
+                -consul-api-timeout={{ .Values.global.consulAPITimeout }} \
                 -log-level={{ default .Values.global.logLevel .Values.syncCatalog.logLevel }} \
                 -log-json={{ .Values.global.logJSON }} \
                 -k8s-default-sync={{ .Values.syncCatalog.default }} \
@@ -170,6 +174,9 @@ spec:
                 {{- if .Values.syncCatalog.consulNodeName }}
                 -consul-node-name={{ .Values.syncCatalog.consulNodeName }} \
                 {{- end }}
+                {{- if .Values.global.adminPartitions.enabled }}
+                -partition={{ .Values.global.adminPartitions.name }} \
+                {{- end }}
                 {{- if .Values.syncCatalog.consulPrefix}}
                 -consul-service-prefix="{{ .Values.syncCatalog.consulPrefix}}" \
                 {{- end}}
@@ -199,7 +206,7 @@ spec:
                 - "/bin/sh"
                 - "-ec"
                 - |
-                  consul-k8s-control-plane consul-logout
+                  consul-k8s-control-plane consul-logout -consul-api-timeout={{ .Values.global.consulAPITimeout }}
           {{- end }}
           livenessProbe:
             httpGet:
@@ -280,6 +287,7 @@ spec:
               {{- if .Values.global.adminPartitions.enabled }}
               -partition={{ .Values.global.adminPartitions.name }} \
               {{- end }}
+              -consul-api-timeout={{ .Values.global.consulAPITimeout }} \
               -log-level={{ default .Values.global.logLevel .Values.syncCatalog.logLevel }} \
               -log-json={{ .Values.global.logJSON }}
         resources:

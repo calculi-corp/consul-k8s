@@ -19,6 +19,10 @@ import (
 // servers and clients, works by creating a kv entry
 // and subsequently reading it from Consul.
 func TestBasicInstallation(t *testing.T) {
+	cfg := suite.Config()
+	if cfg.EnableCNI {
+		t.Skipf("skipping because -enable-cni is set and installing CNI is not a basic installation")
+	}
 	cases := []struct {
 		secure      bool
 		autoEncrypt bool
@@ -51,7 +55,7 @@ func TestBasicInstallation(t *testing.T) {
 
 			consulCluster.Create(t)
 
-			client := consulCluster.SetupConsulClient(t, c.secure)
+			client, _ := consulCluster.SetupConsulClient(t, c.secure)
 
 			// Create a KV entry
 			randomKey := helpers.RandomName()

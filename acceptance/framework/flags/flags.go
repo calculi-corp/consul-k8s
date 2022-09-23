@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/hashicorp/consul-k8s/acceptance/framework/config"
+	"github.com/hashicorp/go-version"
 )
 
 type TestFlags struct {
@@ -26,16 +27,24 @@ type TestFlags struct {
 
 	flagEnablePodSecurityPolicies bool
 
+	flagEnableCNI bool
+
 	flagEnableTransparentProxy bool
 
-	flagConsulImage    string
-	flagConsulK8sImage string
+	flagHelmChartVersion string
+	flagConsulImage      string
+	flagConsulK8sImage   string
+	flagConsulVersion    string
+	flagEnvoyImage       string
 
 	flagNoCleanupOnFailure bool
 
 	flagDebugDirectory string
 
 	flagUseKind bool
+	flagUseGKE  bool
+
+	flagDisablePeering bool
 
 	once sync.Once
 }
@@ -56,6 +65,9 @@ func (t *TestFlags) init() {
 
 	flag.StringVar(&t.flagConsulImage, "consul-image", "", "The Consul image to use for all tests.")
 	flag.StringVar(&t.flagConsulK8sImage, "consul-k8s-image", "", "The consul-k8s image to use for all tests.")
+	flag.StringVar(&t.flagConsulVersion, "consul-version", "", "The consul version used for all tests.")
+	flag.StringVar(&t.flagHelmChartVersion, "helm-chart-version", config.HelmChartPath, "The helm chart used for all tests.")
+	flag.StringVar(&t.flagEnvoyImage, "envoy-image", "", "The Envoy image to use for all tests.")
 
 	flag.BoolVar(&t.flagEnableMultiCluster, "enable-multi-cluster", false,
 		"If true, the tests that require multiple Kubernetes clusters will be run. "+
@@ -78,6 +90,10 @@ func (t *TestFlags) init() {
 	flag.BoolVar(&t.flagEnablePodSecurityPolicies, "enable-pod-security-policies", false,
 		"If true, the test suite will run tests with pod security policies enabled.")
 
+	flag.BoolVar(&t.flagEnableCNI, "enable-cni", false,
+		"If true, the test suite will run tests with consul-cni plugin enabled. "+
+			"In general, this will only run against tests that are mesh related (connect, mesh-gateway, peering, etc")
+
 	flag.BoolVar(&t.flagEnableTransparentProxy, "enable-transparent-proxy", false,
 		"If true, the test suite will run tests with transparent proxy enabled. "+
 			"This applies only to tests that enable connectInject.")
@@ -91,6 +107,11 @@ func (t *TestFlags) init() {
 
 	flag.BoolVar(&t.flagUseKind, "use-kind", false,
 		"If true, the tests will assume they are running against a local kind cluster(s).")
+	flag.BoolVar(&t.flagUseGKE, "use-gke", false,
+		"If true, the tests will assume they are running against a GKE cluster(s).")
+
+	flag.BoolVar(&t.flagDisablePeering, "disable-peering", false,
+		"If true, the peering tests will not run.")
 
 	if t.flagEnterpriseLicense == "" {
 		t.flagEnterpriseLicense = os.Getenv("CONSUL_ENT_LICENSE")
@@ -113,6 +134,9 @@ func (t *TestFlags) Validate() error {
 func (t *TestFlags) TestConfigFromFlags() *config.TestConfig {
 	tempDir := t.flagDebugDirectory
 
+	// if the Version is empty consulVersion will be nil
+	consulVersion, _ := version.NewVersion(t.flagConsulVersion)
+
 	return &config.TestConfig{
 		Kubeconfig:    t.flagKubeconfig,
 		KubeContext:   t.flagKubecontext,
@@ -130,13 +154,21 @@ func (t *TestFlags) TestConfigFromFlags() *config.TestConfig {
 
 		EnablePodSecurityPolicies: t.flagEnablePodSecurityPolicies,
 
+		EnableCNI: t.flagEnableCNI,
+
 		EnableTransparentProxy: t.flagEnableTransparentProxy,
 
-		ConsulImage:    t.flagConsulImage,
-		ConsulK8SImage: t.flagConsulK8sImage,
+		DisablePeering: t.flagDisablePeering,
+
+		HelmChartVersion: t.flagHelmChartVersion,
+		ConsulImage:      t.flagConsulImage,
+		ConsulK8SImage:   t.flagConsulK8sImage,
+		ConsulVersion:    consulVersion,
+		EnvoyImage:       t.flagEnvoyImage,
 
 		NoCleanupOnFailure: t.flagNoCleanupOnFailure,
 		DebugDirectory:     tempDir,
 		UseKind:            t.flagUseKind,
+		UseGKE:             t.flagUseGKE,
 	}
 }

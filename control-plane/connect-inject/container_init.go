@@ -7,18 +7,20 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/pointer"
 )
 
 const (
-	InjectInitCopyContainerName = "copy-consul-bin"
-	InjectInitContainerName     = "consul-connect-inject-init"
-	rootUserAndGroupID          = 0
-	envoyUserAndGroupID         = 5995
-	copyContainerUserAndGroupID = 5996
-	netAdminCapability          = "NET_ADMIN"
-	dnsServiceHostEnvSuffix     = "DNS_SERVICE_HOST"
+	InjectInitCopyContainerName  = "copy-consul-bin"
+	InjectInitContainerName      = "consul-connect-inject-init"
+	rootUserAndGroupID           = 0
+	envoyUserAndGroupID          = 5995
+	initContainersUserAndGroupID = 5996
+	netAdminCapability           = "NET_ADMIN"
+	dnsServiceHostEnvSuffix      = "DNS_SERVICE_HOST"
 )
 
 type initContainerCommandData struct {
@@ -46,6 +48,11 @@ type initContainerCommandData struct {
 	PrometheusScrapePath string
 	// PrometheusBackendPort configures where the listener on Envoy will point to.
 	PrometheusBackendPort string
+	// The file paths to use for configuring TLS on the Prometheus metrics endpoint.
+	PrometheusCAFile   string
+	PrometheusCAPath   string
+	PrometheusCertFile string
+	PrometheusKeyFile  string
 	// EnvoyUID is the Linux user id that will be used when tproxy is enabled.
 	EnvoyUID int
 
@@ -53,6 +60,10 @@ type initContainerCommandData struct {
 	// i.e. run consul connect redirect-traffic command and add the required privileges to the
 	// container to do that.
 	EnableTransparentProxy bool
+
+	// EnableCNI configures this init container to skip the redirect-traffic command as traffic
+	// redirection is handled by the CNI plugin on pod creation.
+	EnableCNI bool
 
 	// TProxyExcludeInboundPorts is a list of inbound ports to exclude from traffic redirection via
 	// the consul connect redirect-traffic command.
@@ -84,17 +95,21 @@ type initContainerCommandData struct {
 	// BearerTokenFile configures where the service account token can be found. This will be unique per service in a
 	// multi port Pod.
 	BearerTokenFile string
+
+	// ConsulAPITimeout is the duration that the consul API client will
+	// wait for a response from the API before cancelling the request.
+	ConsulAPITimeout time.Duration
 }
 
 // initCopyContainer returns the init container spec for the copy container which places
 // the consul binary into the shared volume.
-func (h *Handler) initCopyContainer() corev1.Container {
+func (w *MeshWebhook) initCopyContainer() corev1.Container {
 	// Copy the Consul binary from the image to the shared volume.
 	cmd := "cp /bin/consul /consul/connect-inject/consul"
 	container := corev1.Container{
 		Name:      InjectInitCopyContainerName,
-		Image:     h.ImageConsul,
-		Resources: h.InitContainerResources,
+		Image:     w.ImageConsul,
+		Resources: w.InitContainerResources,
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      volumeName,
@@ -104,13 +119,13 @@ func (h *Handler) initCopyContainer() corev1.Container {
 		Command: []string{"/bin/sh", "-ec", cmd},
 	}
 	// If running on OpenShift, don't set the security context and instead let OpenShift set a random user/group for us.
-	if !h.EnableOpenShift {
+	if !w.EnableOpenShift {
 		container.SecurityContext = &corev1.SecurityContext{
 			// Set RunAsUser because the default user for the consul container is root and we want to run non-root.
-			RunAsUser:              pointerToInt64(copyContainerUserAndGroupID),
-			RunAsGroup:             pointerToInt64(copyContainerUserAndGroupID),
-			RunAsNonRoot:           pointerToBool(true),
-			ReadOnlyRootFilesystem: pointerToBool(true),
+			RunAsUser:              pointer.Int64(initContainersUserAndGroupID),
+			RunAsGroup:             pointer.Int64(initContainersUserAndGroupID),
+			RunAsNonRoot:           pointer.Bool(true),
+			ReadOnlyRootFilesystem: pointer.Bool(true),
 		}
 	}
 	return container
@@ -118,14 +133,14 @@ func (h *Handler) initCopyContainer() corev1.Container {
 
 // containerInit returns the init container spec for connect-init that polls for the service and the connect proxy service to be registered
 // so that it can save the proxy service id to the shared volume and boostrap Envoy with the proxy-id.
-func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi multiPortInfo) (corev1.Container, error) {
+func (w *MeshWebhook) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi multiPortInfo) (corev1.Container, error) {
 	// Check if tproxy is enabled on this pod.
-	tproxyEnabled, err := transparentProxyEnabled(namespace, pod, h.EnableTransparentProxy)
+	tproxyEnabled, err := transparentProxyEnabled(namespace, pod, w.EnableTransparentProxy)
 	if err != nil {
 		return corev1.Container{}, err
 	}
 
-	dnsEnabled, err := consulDNSEnabled(namespace, pod, h.EnableConsulDNS)
+	dnsEnabled, err := consulDNSEnabled(namespace, pod, w.EnableConsulDNS)
 	if err != nil {
 		return corev1.Container{}, err
 	}
@@ -135,21 +150,22 @@ func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi 
 		// If Consul DNS is enabled, we find the environment variable that has the value
 		// of the ClusterIP of the Consul DNS Service. constructDNSServiceHostName returns
 		// the name of the env variable whose value is the ClusterIP of the Consul DNS Service.
-		consulDNSClusterIP = os.Getenv(h.constructDNSServiceHostName())
+		consulDNSClusterIP = os.Getenv(w.constructDNSServiceHostName())
 		if consulDNSClusterIP == "" {
-			return corev1.Container{}, fmt.Errorf("environment variable %s is not found", h.constructDNSServiceHostName())
+			return corev1.Container{}, fmt.Errorf("environment variable %s is not found", w.constructDNSServiceHostName())
 		}
 	}
 
 	multiPort := mpi.serviceName != ""
 
 	data := initContainerCommandData{
-		AuthMethod:                 h.AuthMethod,
-		ConsulPartition:            h.ConsulPartition,
-		ConsulNamespace:            h.consulNamespace(namespace.Name),
-		NamespaceMirroringEnabled:  h.EnableK8SNSMirroring,
-		ConsulCACert:               h.ConsulCACert,
+		AuthMethod:                 w.AuthMethod,
+		ConsulPartition:            w.ConsulPartition,
+		ConsulNamespace:            w.consulNamespace(namespace.Name),
+		NamespaceMirroringEnabled:  w.EnableK8SNSMirroring,
+		ConsulCACert:               w.ConsulCACert,
 		EnableTransparentProxy:     tproxyEnabled,
+		EnableCNI:                  w.EnableCNI,
 		TProxyExcludeInboundPorts:  splitCommaSeparatedItemsFromAnnotation(annotationTProxyExcludeInboundPorts, pod),
 		TProxyExcludeOutboundPorts: splitCommaSeparatedItemsFromAnnotation(annotationTProxyExcludeOutboundPorts, pod),
 		TProxyExcludeOutboundCIDRs: splitCommaSeparatedItemsFromAnnotation(annotationTProxyExcludeOutboundCIDRs, pod),
@@ -158,6 +174,7 @@ func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi 
 		EnvoyUID:                   envoyUserAndGroupID,
 		MultiPort:                  multiPort,
 		EnvoyAdminPort:             19000 + mpi.serviceIndex,
+		ConsulAPITimeout:           w.ConsulAPITimeout,
 	}
 
 	// Create expected volume mounts
@@ -173,7 +190,7 @@ func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi 
 	} else {
 		data.ServiceName = pod.Annotations[annotationService]
 	}
-	if h.AuthMethod != "" {
+	if w.AuthMethod != "" {
 		if multiPort {
 			// If multi port then we require that the service account name
 			// matches the service name.
@@ -195,18 +212,44 @@ func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi 
 	// This determines how to configure the consul connect envoy command: what
 	// metrics backend to use and what path to expose on the
 	// envoy_prometheus_bind_addr listener for scraping.
-	metricsServer, err := h.MetricsConfig.shouldRunMergedMetricsServer(pod)
+	metricsServer, err := w.MetricsConfig.shouldRunMergedMetricsServer(pod)
 	if err != nil {
 		return corev1.Container{}, err
 	}
 	if metricsServer {
-		prometheusScrapePath := h.MetricsConfig.prometheusScrapePath(pod)
-		mergedMetricsPort, err := h.MetricsConfig.mergedMetricsPort(pod)
+		prometheusScrapePath := w.MetricsConfig.prometheusScrapePath(pod)
+		mergedMetricsPort, err := w.MetricsConfig.mergedMetricsPort(pod)
 		if err != nil {
 			return corev1.Container{}, err
 		}
 		data.PrometheusScrapePath = prometheusScrapePath
 		data.PrometheusBackendPort = mergedMetricsPort
+	}
+	// Pull the TLS config from the relevant annotations.
+	if raw, ok := pod.Annotations[annotationPrometheusCAFile]; ok && raw != "" {
+		data.PrometheusCAFile = raw
+	}
+	if raw, ok := pod.Annotations[annotationPrometheusCAPath]; ok && raw != "" {
+		data.PrometheusCAPath = raw
+	}
+	if raw, ok := pod.Annotations[annotationPrometheusCertFile]; ok && raw != "" {
+		data.PrometheusCertFile = raw
+	}
+	if raw, ok := pod.Annotations[annotationPrometheusKeyFile]; ok && raw != "" {
+		data.PrometheusKeyFile = raw
+	}
+
+	// Validate required Prometheus TLS config is present if set.
+	if data.PrometheusCertFile != "" || data.PrometheusKeyFile != "" || data.PrometheusCAFile != "" || data.PrometheusCAPath != "" {
+		if data.PrometheusCAFile == "" && data.PrometheusCAPath == "" {
+			return corev1.Container{}, fmt.Errorf("Must set one of %q or %q when providing prometheus TLS config", annotationPrometheusCAFile, annotationPrometheusCAPath)
+		}
+		if data.PrometheusCertFile == "" {
+			return corev1.Container{}, fmt.Errorf("Must set %q when providing prometheus TLS config", annotationPrometheusCertFile)
+		}
+		if data.PrometheusKeyFile == "" {
+			return corev1.Container{}, fmt.Errorf("Must set %q when providing prometheus TLS config", annotationPrometheusKeyFile)
+		}
 	}
 
 	// Render the command
@@ -224,7 +267,7 @@ func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi 
 	}
 	container := corev1.Container{
 		Name:  initContainerName,
-		Image: h.ImageConsulK8S,
+		Image: w.ImageConsulK8S,
 		Env: []corev1.EnvVar{
 			{
 				Name: "HOST_IP",
@@ -251,7 +294,7 @@ func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi 
 				},
 			},
 		},
-		Resources:    h.InitContainerResources,
+		Resources:    w.InitContainerResources,
 		VolumeMounts: volMounts,
 		Command:      []string{"/bin/sh", "-ec", buf.String()},
 	}
@@ -259,15 +302,27 @@ func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi 
 	if tproxyEnabled {
 		// Running consul connect redirect-traffic with iptables
 		// requires both being a root user and having NET_ADMIN capability.
-		container.SecurityContext = &corev1.SecurityContext{
-			RunAsUser:  pointerToInt64(rootUserAndGroupID),
-			RunAsGroup: pointerToInt64(rootUserAndGroupID),
-			// RunAsNonRoot overrides any setting in the Pod so that we can still run as root here as required.
-			RunAsNonRoot: pointerToBool(false),
-			Privileged:   pointerToBool(true),
-			Capabilities: &corev1.Capabilities{
-				Add: []corev1.Capability{netAdminCapability},
-			},
+		if !w.EnableCNI {
+			container.SecurityContext = &corev1.SecurityContext{
+				RunAsUser:  pointer.Int64(rootUserAndGroupID),
+				RunAsGroup: pointer.Int64(rootUserAndGroupID),
+				// RunAsNonRoot overrides any setting in the Pod so that we can still run as root here as required.
+				RunAsNonRoot: pointer.Bool(false),
+				Privileged:   pointer.Bool(true),
+				Capabilities: &corev1.Capabilities{
+					Add: []corev1.Capability{netAdminCapability},
+				},
+			}
+		} else {
+			container.SecurityContext = &corev1.SecurityContext{
+				RunAsUser:    pointer.Int64(initContainersUserAndGroupID),
+				RunAsGroup:   pointer.Int64(initContainersUserAndGroupID),
+				RunAsNonRoot: pointer.Bool(true),
+				Privileged:   pointer.Bool(false),
+				Capabilities: &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				},
+			}
 		}
 	}
 
@@ -277,8 +332,8 @@ func (h *Handler) containerInit(namespace corev1.Namespace, pod corev1.Pod, mpi 
 // constructDNSServiceHostName use the resource prefix and the DNS Service hostname suffix to construct the
 // key of the env variable whose value is the cluster IP of the Consul DNS Service.
 // It translates "resource-prefix" into "RESOURCE_PREFIX_DNS_SERVICE_HOST".
-func (h *Handler) constructDNSServiceHostName() string {
-	upcaseResourcePrefix := strings.ToUpper(h.ResourcePrefix)
+func (w *MeshWebhook) constructDNSServiceHostName() string {
+	upcaseResourcePrefix := strings.ToUpper(w.ResourcePrefix)
 	upcaseResourcePrefixWithUnderscores := strings.ReplaceAll(upcaseResourcePrefix, "-", "_")
 	return strings.Join([]string{upcaseResourcePrefixWithUnderscores, dnsServiceHostEnvSuffix}, "_")
 }
@@ -315,16 +370,6 @@ func consulDNSEnabled(namespace corev1.Namespace, pod corev1.Pod, globalEnabled 
 	return globalEnabled, nil
 }
 
-// pointerToInt64 takes an int64 and returns a pointer to it.
-func pointerToInt64(i int64) *int64 {
-	return &i
-}
-
-// pointerToBool takes a bool and returns a pointer to it.
-func pointerToBool(b bool) *bool {
-	return &b
-}
-
 // splitCommaSeparatedItemsFromAnnotation takes an annotation and a pod
 // and returns the comma-separated value of the annotation as a list of strings.
 func splitCommaSeparatedItemsFromAnnotation(annotation string, pod corev1.Pod) []string {
@@ -351,6 +396,7 @@ export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 {{- end}}
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout={{ .ConsulAPITimeout }} \
   {{- if .AuthMethod }}
   -acl-auth-method="{{ .AuthMethod }}" \
   -service-account-name="{{ .ServiceAccountName }}" \
@@ -396,6 +442,18 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
   {{- if .PrometheusBackendPort }}
   -prometheus-backend-port="{{ .PrometheusBackendPort }}" \
   {{- end }}
+  {{- if .PrometheusCAFile }}
+  -prometheus-ca-file="{{ .PrometheusCAFile }}" \
+  {{- end }}
+  {{- if .PrometheusCAPath }}
+  -prometheus-ca-path="{{ .PrometheusCAPath }}" \
+  {{- end }}
+  {{- if .PrometheusCertFile }}
+  -prometheus-cert-file="{{ .PrometheusCertFile }}" \
+  {{- end }}
+  {{- if .PrometheusKeyFile }}
+  -prometheus-key-file="{{ .PrometheusKeyFile }}" \
+  {{- end }}
   {{- if .AuthMethod }}
   {{- if .MultiPort }}
   -token-file="/consul/connect-inject/acl-token-{{ .ServiceName }}" \
@@ -416,6 +474,7 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 
 
 {{- if .EnableTransparentProxy }}
+{{- if not .EnableCNI }}
 {{- /* The newline below is intentional to allow extra space
        in the rendered template between this and the previous commands. */}}
 
@@ -447,5 +506,6 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
   {{- end }}
   -proxy-id="$(cat /consul/connect-inject/proxyid)" \
   -proxy-uid={{ .EnvoyUID }}
+{{- end }}
 {{- end }}
 `

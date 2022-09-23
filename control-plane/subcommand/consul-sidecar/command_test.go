@@ -3,7 +3,8 @@ package consulsidecar
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
+	"io"
+
 	"net"
 	"net/http"
 	"os"
@@ -59,6 +60,7 @@ func TestRunSignalHandlingRegistrationOnly(t *testing.T) {
 				"-service-config", configFile,
 				"-http-addr", a.HTTPAddr,
 				"-sync-period", "1s",
+				"-consul-api-timeout", "5s",
 			})
 			cmd.sendSignal(signal)
 
@@ -99,6 +101,7 @@ func TestRunSignalHandlingMetricsOnly(t *testing.T) {
 				"-merged-metrics-port", fmt.Sprint(randomPorts[0]),
 				"-service-metrics-port", "8080",
 				"-service-metrics-path", "/metrics",
+				"-consul-api-timeout", "5s",
 			})
 
 			// Keep an open connection to the server by continuously sending bytes
@@ -172,6 +175,7 @@ func TestRunSignalHandlingAllProcessesEnabled(t *testing.T) {
 				"-merged-metrics-port", fmt.Sprint(randomPorts[0]),
 				"-service-metrics-port", "8080",
 				"-service-metrics-path", "/metrics",
+				"-consul-api-timeout", "5s",
 			})
 
 			// Keep an open connection to the server by continuously sending bytes
@@ -221,7 +225,7 @@ type mockEnvoyMetricsGetter struct {
 func (em *mockEnvoyMetricsGetter) Get(_ string) (resp *http.Response, err error) {
 	response := &http.Response{}
 	response.StatusCode = em.respStatusCode
-	response.Body = ioutil.NopCloser(bytes.NewReader([]byte("envoy metrics\n")))
+	response.Body = io.NopCloser(bytes.NewReader([]byte("envoy metrics\n")))
 	return response, nil
 }
 
@@ -239,7 +243,7 @@ func (sm *mockServiceMetricsGetter) Get(url string) (resp *http.Response, err er
 	sm.reqURL = url
 
 	response := &http.Response{}
-	response.Body = ioutil.NopCloser(bytes.NewReader([]byte("service metrics\n")))
+	response.Body = io.NopCloser(bytes.NewReader([]byte("service metrics\n")))
 	response.StatusCode = sm.respStatusCode
 
 	return response, nil
@@ -326,7 +330,7 @@ func TestMergedMetricsServer(t *testing.T) {
 			retry.Run(t, func(r *retry.R) {
 				resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/stats/prometheus", randomPorts[0]))
 				require.NoError(r, err)
-				bytes, err := ioutil.ReadAll(resp.Body)
+				bytes, err := io.ReadAll(resp.Body)
 				require.NoError(r, err)
 				require.Equal(r, c.expectedOutput, string(bytes))
 				// Verify the correct service metrics url was used. The service
@@ -372,6 +376,15 @@ func TestRun_FlagValidation(t *testing.T) {
 			},
 			ExpErr: " at least one of -enable-service-registration or -enable-metrics-merging must be true",
 		},
+		{
+			Flags: []string{
+				"-service-config=/config.hcl",
+				"-consul-binary=consul",
+				"-sync-period=5s",
+				"-enable-service-registration=true",
+			},
+			ExpErr: "-consul-api-timeout must be set to a value greater than 0",
+		},
 	}
 
 	for _, c := range cases {
@@ -393,7 +406,7 @@ func TestRun_FlagValidation_ServiceConfigFileMissing(t *testing.T) {
 	cmd := Command{
 		UI: ui,
 	}
-	responseCode := cmd.Run([]string{"-service-config=/does/not/exist", "-consul-binary=/not/a/valid/path"})
+	responseCode := cmd.Run([]string{"-service-config=/does/not/exist", "-consul-binary=/not/a/valid/path", "-consul-api-timeout=5s"})
 	require.Equal(t, 1, responseCode, ui.ErrorWriter.String())
 	require.Contains(t, ui.ErrorWriter.String(), "-service-config file \"/does/not/exist\" not found")
 }
@@ -411,7 +424,7 @@ func TestRun_FlagValidation_ConsulBinaryMissing(t *testing.T) {
 
 	configFlag := "-service-config=" + configFile
 
-	responseCode := cmd.Run([]string{configFlag, "-consul-binary=/not/a/valid/path"})
+	responseCode := cmd.Run([]string{configFlag, "-consul-binary=/not/a/valid/path", "-consul-api-timeout=5s"})
 	require.Equal(t, 1, responseCode, ui.ErrorWriter.String())
 	require.Contains(t, ui.ErrorWriter.String(), "-consul-binary \"/not/a/valid/path\" not found")
 }
@@ -426,7 +439,7 @@ func TestRun_FlagValidation_InvalidLogLevel(t *testing.T) {
 	cmd := Command{
 		UI: ui,
 	}
-	responseCode := cmd.Run([]string{"-service-config", configFile, "-consul-binary=consul", "-log-level=foo"})
+	responseCode := cmd.Run([]string{"-service-config", configFile, "-consul-binary=consul", "-log-level=foo", "-consul-api-timeout=5s"})
 	require.Equal(t, 1, responseCode, ui.ErrorWriter.String())
 	require.Contains(t, ui.ErrorWriter.String(), "unknown log level: foo")
 }
@@ -452,6 +465,7 @@ func TestRun_ServicesRegistration(t *testing.T) {
 		"-http-addr", a.HTTPAddr,
 		"-service-config", configFile,
 		"-sync-period", "100ms",
+		"-consul-api-timeout", "5s",
 	})
 	defer stopCommand(t, &cmd, exitChan)
 
@@ -492,6 +506,7 @@ func TestRun_ServicesRegistration_ConsulDown(t *testing.T) {
 		"-http-addr", fmt.Sprintf("127.0.0.1:%d", randomPorts[1]),
 		"-service-config", configFile,
 		"-sync-period", "100ms",
+		"-consul-api-timeout", "5s",
 	})
 	defer stopCommand(t, &cmd, exitChan)
 
@@ -552,6 +567,7 @@ func TestRun_ConsulCommandFlags(t *testing.T) {
 		"-token-file=/token/file",
 		"-ca-file=/ca/file",
 		"-ca-path=/ca/path",
+		"-consul-api-timeout", "5s",
 	})
 	defer stopCommand(t, &cmd, exitChan)
 
@@ -598,11 +614,11 @@ func stopCommand(t *testing.T, cmd *Command, exitChan chan int) {
 // createServicesTmpFile creates a temp directory
 // and writes servicesRegistration as an HCL file there.
 func createServicesTmpFile(t *testing.T, serviceHCL string) (string, string) {
-	tmpDir, err := ioutil.TempDir("", "")
+	tmpDir, err := os.MkdirTemp("", "")
 	require.NoError(t, err)
 
 	configFile := filepath.Join(tmpDir, "svc.hcl")
-	err = ioutil.WriteFile(configFile, []byte(serviceHCL), 0600)
+	err = os.WriteFile(configFile, []byte(serviceHCL), 0600)
 	require.NoError(t, err)
 
 	return tmpDir, configFile

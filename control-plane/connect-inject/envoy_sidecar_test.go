@@ -8,44 +8,80 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 )
 
 func TestHandlerEnvoySidecar(t *testing.T) {
 	require := require.New(t)
-	h := Handler{}
-	pod := corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Annotations: map[string]string{
+	cases := map[string]struct {
+		annotations map[string]string
+		expCommand  []string
+		expErr      string
+	}{
+		"default settings, no annotations": {
+			annotations: map[string]string{
 				annotationService: "foo",
 			},
-		},
-
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{
-				{
-					Name: "web",
-				},
+			expCommand: []string{
+				"envoy",
+				"--config-path", "/consul/connect-inject/envoy-bootstrap.yaml",
+				"--concurrency", "0",
 			},
 		},
-	}
-	container, err := h.envoySidecar(testNS, pod, multiPortInfo{})
-	require.NoError(err)
-	require.Equal(container.Command, []string{
-		"envoy",
-		"--config-path", "/consul/connect-inject/envoy-bootstrap.yaml",
-	})
-
-	require.Equal(container.VolumeMounts, []corev1.VolumeMount{
-		{
-			Name:      volumeName,
-			MountPath: "/consul/connect-inject",
+		"default settings, annotation override": {
+			annotations: map[string]string{
+				annotationService:               "foo",
+				annotationEnvoyProxyConcurrency: "42",
+			},
+			expCommand: []string{
+				"envoy",
+				"--config-path", "/consul/connect-inject/envoy-bootstrap.yaml",
+				"--concurrency", "42",
+			},
 		},
-	})
+		"default settings, invalid concurrency annotation negative number": {
+			annotations: map[string]string{
+				annotationService:               "foo",
+				annotationEnvoyProxyConcurrency: "-42",
+			},
+			expErr: "invalid envoy concurrency, must be >= 0: -42",
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := MeshWebhook{}
+			pod := corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: c.annotations,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name: "web",
+						},
+					},
+				},
+			}
+			container, err := h.envoySidecar(testNS, pod, multiPortInfo{})
+			if c.expErr != "" {
+				require.Contains(err.Error(), c.expErr)
+			} else {
+				require.NoError(err)
+				require.Equal(c.expCommand, container.Command)
+				require.Equal(container.VolumeMounts, []corev1.VolumeMount{
+					{
+						Name:      volumeName,
+						MountPath: "/consul/connect-inject",
+					},
+				})
+			}
+		})
+	}
 }
 
 func TestHandlerEnvoySidecar_Multiport(t *testing.T) {
 	require := require.New(t)
-	h := Handler{}
+	w := MeshWebhook{}
 	pod := corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
@@ -75,11 +111,11 @@ func TestHandlerEnvoySidecar_Multiport(t *testing.T) {
 		},
 	}
 	expCommand := map[int][]string{
-		0: {"envoy", "--config-path", "/consul/connect-inject/envoy-bootstrap-web.yaml", "--base-id", "0"},
-		1: {"envoy", "--config-path", "/consul/connect-inject/envoy-bootstrap-web-admin.yaml", "--base-id", "1"},
+		0: {"envoy", "--config-path", "/consul/connect-inject/envoy-bootstrap-web.yaml", "--base-id", "0", "--concurrency", "0"},
+		1: {"envoy", "--config-path", "/consul/connect-inject/envoy-bootstrap-web-admin.yaml", "--base-id", "1", "--concurrency", "0"},
 	}
 	for i := 0; i < 2; i++ {
-		container, err := h.envoySidecar(testNS, pod, multiPortInfos[i])
+		container, err := w.envoySidecar(testNS, pod, multiPortInfos[i])
 		require.NoError(err)
 		require.Equal(expCommand[i], container.Command)
 
@@ -102,20 +138,20 @@ func TestHandlerEnvoySidecar_withSecurityContext(t *testing.T) {
 			tproxyEnabled:    false,
 			openShiftEnabled: false,
 			expSecurityContext: &corev1.SecurityContext{
-				RunAsUser:              pointerToInt64(envoyUserAndGroupID),
-				RunAsGroup:             pointerToInt64(envoyUserAndGroupID),
-				RunAsNonRoot:           pointerToBool(true),
-				ReadOnlyRootFilesystem: pointerToBool(true),
+				RunAsUser:              pointer.Int64(envoyUserAndGroupID),
+				RunAsGroup:             pointer.Int64(envoyUserAndGroupID),
+				RunAsNonRoot:           pointer.Bool(true),
+				ReadOnlyRootFilesystem: pointer.Bool(true),
 			},
 		},
 		"tproxy enabled; openshift disabled": {
 			tproxyEnabled:    true,
 			openShiftEnabled: false,
 			expSecurityContext: &corev1.SecurityContext{
-				RunAsUser:              pointerToInt64(envoyUserAndGroupID),
-				RunAsGroup:             pointerToInt64(envoyUserAndGroupID),
-				RunAsNonRoot:           pointerToBool(true),
-				ReadOnlyRootFilesystem: pointerToBool(true),
+				RunAsUser:              pointer.Int64(envoyUserAndGroupID),
+				RunAsGroup:             pointer.Int64(envoyUserAndGroupID),
+				RunAsNonRoot:           pointer.Bool(true),
+				ReadOnlyRootFilesystem: pointer.Bool(true),
 			},
 		},
 		"tproxy disabled; openshift enabled": {
@@ -127,16 +163,16 @@ func TestHandlerEnvoySidecar_withSecurityContext(t *testing.T) {
 			tproxyEnabled:    true,
 			openShiftEnabled: true,
 			expSecurityContext: &corev1.SecurityContext{
-				RunAsUser:              pointerToInt64(envoyUserAndGroupID),
-				RunAsGroup:             pointerToInt64(envoyUserAndGroupID),
-				RunAsNonRoot:           pointerToBool(true),
-				ReadOnlyRootFilesystem: pointerToBool(true),
+				RunAsUser:              pointer.Int64(envoyUserAndGroupID),
+				RunAsGroup:             pointer.Int64(envoyUserAndGroupID),
+				RunAsNonRoot:           pointer.Bool(true),
+				ReadOnlyRootFilesystem: pointer.Bool(true),
 			},
 		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := Handler{
+			w := MeshWebhook{
 				EnableTransparentProxy: c.tproxyEnabled,
 				EnableOpenShift:        c.openShiftEnabled,
 			}
@@ -155,7 +191,7 @@ func TestHandlerEnvoySidecar_withSecurityContext(t *testing.T) {
 					},
 				},
 			}
-			ec, err := h.envoySidecar(testNS, pod, multiPortInfo{})
+			ec, err := w.envoySidecar(testNS, pod, multiPortInfo{})
 			require.NoError(t, err)
 			require.Equal(t, c.expSecurityContext, ec.SecurityContext)
 		})
@@ -163,10 +199,10 @@ func TestHandlerEnvoySidecar_withSecurityContext(t *testing.T) {
 }
 
 // Test that if the user specifies a pod security context with the same uid as `envoyUserAndGroupID` that we return
-// an error to the handler.
+// an error to the meshWebhook.
 func TestHandlerEnvoySidecar_FailsWithDuplicatePodSecurityContextUID(t *testing.T) {
 	require := require.New(t)
-	h := Handler{}
+	w := MeshWebhook{}
 	pod := corev1.Pod{
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
@@ -175,22 +211,22 @@ func TestHandlerEnvoySidecar_FailsWithDuplicatePodSecurityContextUID(t *testing.
 				},
 			},
 			SecurityContext: &corev1.PodSecurityContext{
-				RunAsUser: pointerToInt64(envoyUserAndGroupID),
+				RunAsUser: pointer.Int64(envoyUserAndGroupID),
 			},
 		},
 	}
-	_, err := h.envoySidecar(testNS, pod, multiPortInfo{})
+	_, err := w.envoySidecar(testNS, pod, multiPortInfo{})
 	require.Error(err, fmt.Sprintf("pod security context cannot have the same uid as envoy: %v", envoyUserAndGroupID))
 }
 
 // Test that if the user specifies a container with security context with the same uid as `envoyUserAndGroupID` that we
-// return an error to the handler. If a container using the envoy image has the same uid, we don't return an error
+// return an error to the meshWebhook. If a container using the envoy image has the same uid, we don't return an error
 // because in multiport pod there can be multiple envoy sidecars.
 func TestHandlerEnvoySidecar_FailsWithDuplicateContainerSecurityContextUID(t *testing.T) {
 	cases := []struct {
 		name          string
 		pod           corev1.Pod
-		handler       Handler
+		webhook       MeshWebhook
 		expErr        bool
 		expErrMessage error
 	}{
@@ -203,21 +239,21 @@ func TestHandlerEnvoySidecar_FailsWithDuplicateContainerSecurityContextUID(t *te
 							Name: "web",
 							// Setting RunAsUser: 1 should succeed.
 							SecurityContext: &corev1.SecurityContext{
-								RunAsUser: pointerToInt64(1),
+								RunAsUser: pointer.Int64(1),
 							},
 						},
 						{
 							Name: "app",
 							// Setting RunAsUser: 5995 should fail.
 							SecurityContext: &corev1.SecurityContext{
-								RunAsUser: pointerToInt64(envoyUserAndGroupID),
+								RunAsUser: pointer.Int64(envoyUserAndGroupID),
 							},
 							Image: "not-envoy",
 						},
 					},
 				},
 			},
-			handler:       Handler{},
+			webhook:       MeshWebhook{},
 			expErr:        true,
 			expErrMessage: fmt.Errorf("container app has runAsUser set to the same uid %q as envoy which is not allowed", envoyUserAndGroupID),
 		},
@@ -230,21 +266,21 @@ func TestHandlerEnvoySidecar_FailsWithDuplicateContainerSecurityContextUID(t *te
 							Name: "web",
 							// Setting RunAsUser: 1 should succeed.
 							SecurityContext: &corev1.SecurityContext{
-								RunAsUser: pointerToInt64(1),
+								RunAsUser: pointer.Int64(1),
 							},
 						},
 						{
 							Name: "sidecar",
 							// Setting RunAsUser: 5995 should succeed if the image matches h.ImageEnvoy.
 							SecurityContext: &corev1.SecurityContext{
-								RunAsUser: pointerToInt64(envoyUserAndGroupID),
+								RunAsUser: pointer.Int64(envoyUserAndGroupID),
 							},
 							Image: "envoy",
 						},
 					},
 				},
 			},
-			handler: Handler{
+			webhook: MeshWebhook{
 				ImageEnvoy: "envoy",
 			},
 			expErr: false,
@@ -253,7 +289,7 @@ func TestHandlerEnvoySidecar_FailsWithDuplicateContainerSecurityContextUID(t *te
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := tc.handler.envoySidecar(testNS, tc.pod, multiPortInfo{})
+			_, err := tc.webhook.envoySidecar(testNS, tc.pod, multiPortInfo{})
 			if tc.expErr {
 				require.Error(t, err, tc.expErrMessage)
 			} else {
@@ -280,6 +316,7 @@ func TestHandlerEnvoySidecar_EnvoyExtraArgs(t *testing.T) {
 			expectedContainerCommand: []string{
 				"envoy",
 				"--config-path", "/consul/connect-inject/envoy-bootstrap.yaml",
+				"--concurrency", "0",
 			},
 		},
 		{
@@ -289,6 +326,7 @@ func TestHandlerEnvoySidecar_EnvoyExtraArgs(t *testing.T) {
 			expectedContainerCommand: []string{
 				"envoy",
 				"--config-path", "/consul/connect-inject/envoy-bootstrap.yaml",
+				"--concurrency", "0",
 				"--log-level", "debug",
 			},
 		},
@@ -299,6 +337,7 @@ func TestHandlerEnvoySidecar_EnvoyExtraArgs(t *testing.T) {
 			expectedContainerCommand: []string{
 				"envoy",
 				"--config-path", "/consul/connect-inject/envoy-bootstrap.yaml",
+				"--concurrency", "0",
 				"--log-level", "debug",
 				"--admin-address-path", "\"/tmp/consul/foo bar\"",
 			},
@@ -316,6 +355,7 @@ func TestHandlerEnvoySidecar_EnvoyExtraArgs(t *testing.T) {
 			expectedContainerCommand: []string{
 				"envoy",
 				"--config-path", "/consul/connect-inject/envoy-bootstrap.yaml",
+				"--concurrency", "0",
 				"--log-level", "debug",
 				"--admin-address-path", "\"/tmp/consul/foo bar\"",
 			},
@@ -333,6 +373,7 @@ func TestHandlerEnvoySidecar_EnvoyExtraArgs(t *testing.T) {
 			expectedContainerCommand: []string{
 				"envoy",
 				"--config-path", "/consul/connect-inject/envoy-bootstrap.yaml",
+				"--concurrency", "0",
 				"--log-level", "debug",
 				"--admin-address-path", "\"/tmp/consul/foo bar\"",
 			},
@@ -341,7 +382,7 @@ func TestHandlerEnvoySidecar_EnvoyExtraArgs(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := Handler{
+			h := MeshWebhook{
 				ImageConsul:    "hashicorp/consul:latest",
 				ImageEnvoy:     "hashicorp/consul-k8s:latest",
 				EnvoyExtraArgs: tc.envoyExtraArgs,
@@ -354,6 +395,69 @@ func TestHandlerEnvoySidecar_EnvoyExtraArgs(t *testing.T) {
 	}
 }
 
+func TestHandlerEnvoySidecar_UserVolumeMounts(t *testing.T) {
+	cases := []struct {
+		name                          string
+		pod                           corev1.Pod
+		expectedContainerVolumeMounts []corev1.VolumeMount
+		expErr                        string
+	}{
+		{
+			name: "able to set a sidecar container volume mount via annotation",
+			pod: corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						annotationEnvoyExtraArgs:               "--log-level debug --admin-address-path \"/tmp/consul/foo bar\"",
+						annotationConsulSidecarUserVolumeMount: "[{\"name\": \"tls-cert\", \"mountPath\": \"/custom/path\"}, {\"name\": \"tls-ca\", \"mountPath\": \"/custom/path2\"}]",
+					},
+				},
+			},
+			expectedContainerVolumeMounts: []corev1.VolumeMount{
+				{
+					Name:      "consul-connect-inject-data",
+					MountPath: "/consul/connect-inject",
+				},
+				{
+					Name:      "tls-cert",
+					MountPath: "/custom/path",
+				},
+				{
+					Name:      "tls-ca",
+					MountPath: "/custom/path2",
+				},
+			},
+		},
+		{
+			name: "invalid annotation results in error",
+			pod: corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						annotationEnvoyExtraArgs:               "--log-level debug --admin-address-path \"/tmp/consul/foo bar\"",
+						annotationConsulSidecarUserVolumeMount: "[abcdefg]",
+					},
+				},
+			},
+			expErr: "invalid character 'a' looking ",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := MeshWebhook{
+				ImageConsul: "hashicorp/consul:latest",
+				ImageEnvoy:  "hashicorp/consul-k8s:latest",
+			}
+			c, err := h.envoySidecar(testNS, tc.pod, multiPortInfo{})
+			if tc.expErr == "" {
+				require.NoError(t, err)
+				require.Equal(t, tc.expectedContainerVolumeMounts, c.VolumeMounts)
+			} else {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.expErr)
+			}
+		})
+	}
+}
+
 func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 	mem1 := resource.MustParse("100Mi")
 	mem2 := resource.MustParse("200Mi")
@@ -362,13 +466,13 @@ func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 	zero := resource.MustParse("0")
 
 	cases := map[string]struct {
-		handler      Handler
+		webhook      MeshWebhook
 		annotations  map[string]string
 		expResources corev1.ResourceRequirements
 		expErr       string
 	}{
 		"no defaults, no annotations": {
-			handler:     Handler{},
+			webhook:     MeshWebhook{},
 			annotations: nil,
 			expResources: corev1.ResourceRequirements{
 				Limits:   corev1.ResourceList{},
@@ -376,7 +480,7 @@ func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 			},
 		},
 		"all defaults, no annotations": {
-			handler: Handler{
+			webhook: MeshWebhook{
 				DefaultProxyCPURequest:    cpu1,
 				DefaultProxyCPULimit:      cpu2,
 				DefaultProxyMemoryRequest: mem1,
@@ -395,7 +499,7 @@ func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 			},
 		},
 		"no defaults, all annotations": {
-			handler: Handler{},
+			webhook: MeshWebhook{},
 			annotations: map[string]string{
 				annotationSidecarProxyCPURequest:    "100m",
 				annotationSidecarProxyMemoryRequest: "100Mi",
@@ -414,7 +518,7 @@ func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 			},
 		},
 		"annotations override defaults": {
-			handler: Handler{
+			webhook: MeshWebhook{
 				DefaultProxyCPURequest:    zero,
 				DefaultProxyCPULimit:      zero,
 				DefaultProxyMemoryRequest: zero,
@@ -438,7 +542,7 @@ func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 			},
 		},
 		"defaults set to zero, no annotations": {
-			handler: Handler{
+			webhook: MeshWebhook{
 				DefaultProxyCPURequest:    zero,
 				DefaultProxyCPULimit:      zero,
 				DefaultProxyMemoryRequest: zero,
@@ -457,7 +561,7 @@ func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 			},
 		},
 		"annotations set to 0": {
-			handler: Handler{},
+			webhook: MeshWebhook{},
 			annotations: map[string]string{
 				annotationSidecarProxyCPURequest:    "0",
 				annotationSidecarProxyMemoryRequest: "0",
@@ -476,28 +580,28 @@ func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 			},
 		},
 		"invalid cpu request": {
-			handler: Handler{},
+			webhook: MeshWebhook{},
 			annotations: map[string]string{
 				annotationSidecarProxyCPURequest: "invalid",
 			},
 			expErr: "parsing annotation consul.hashicorp.com/sidecar-proxy-cpu-request:\"invalid\": quantities must match the regular expression",
 		},
 		"invalid cpu limit": {
-			handler: Handler{},
+			webhook: MeshWebhook{},
 			annotations: map[string]string{
 				annotationSidecarProxyCPULimit: "invalid",
 			},
 			expErr: "parsing annotation consul.hashicorp.com/sidecar-proxy-cpu-limit:\"invalid\": quantities must match the regular expression",
 		},
 		"invalid memory request": {
-			handler: Handler{},
+			webhook: MeshWebhook{},
 			annotations: map[string]string{
 				annotationSidecarProxyMemoryRequest: "invalid",
 			},
 			expErr: "parsing annotation consul.hashicorp.com/sidecar-proxy-memory-request:\"invalid\": quantities must match the regular expression",
 		},
 		"invalid memory limit": {
-			handler: Handler{},
+			webhook: MeshWebhook{},
 			annotations: map[string]string{
 				annotationSidecarProxyMemoryLimit: "invalid",
 			},
@@ -521,7 +625,7 @@ func TestHandlerEnvoySidecar_Resources(t *testing.T) {
 					},
 				},
 			}
-			container, err := c.handler.envoySidecar(testNS, pod, multiPortInfo{})
+			container, err := c.webhook.envoySidecar(testNS, pod, multiPortInfo{})
 			if c.expErr != "" {
 				require.NotNil(err)
 				require.Contains(err.Error(), c.expErr)

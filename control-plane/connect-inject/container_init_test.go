@@ -5,11 +5,13 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/pointer"
 )
 
 const k8sNamespace = "k8snamespace"
@@ -45,9 +47,10 @@ func TestHandlerContainerInit(t *testing.T) {
 	cases := []struct {
 		Name    string
 		Pod     func(*corev1.Pod) *corev1.Pod
-		Handler Handler
+		Webhook MeshWebhook
 		Cmd     string // Strings.Contains test
 		CmdNot  string // Not contains
+		ErrStr  string // Error contains
 	}{
 		// The first test checks the whole template. Subsequent tests check
 		// the parts that change.
@@ -57,16 +60,18 @@ func TestHandlerContainerInit(t *testing.T) {
 				pod.Annotations[annotationService] = "web"
 				return pod
 			},
-			Handler{},
+			MeshWebhook{},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=0s \
 
 # Generate the envoy bootstrap code
 /consul/connect-inject/consul connect envoy \
   -proxy-id="$(cat /consul/connect-inject/proxyid)" \
   -bootstrap > /consul/connect-inject/envoy-bootstrap.yaml`,
+			"",
 			"",
 		},
 
@@ -83,17 +88,20 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				}
 				return pod
 			},
-			Handler{
-				AuthMethod: "an-auth-method",
+			MeshWebhook{
+				AuthMethod:       "an-auth-method",
+				ConsulAPITimeout: 5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -acl-auth-method="an-auth-method" \
   -service-account-name="a-service-account-name" \
   -service-name="web" \
 `,
+			"",
 			"",
 		},
 		{
@@ -112,16 +120,87 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationServiceMetricsPort] = "1234"
 				pod.Annotations[annotationPrometheusScrapePort] = "22222"
 				pod.Annotations[annotationPrometheusScrapePath] = "/scrape-path"
+				pod.Annotations[annotationPrometheusCAFile] = "/certs/ca.crt"
+				pod.Annotations[annotationPrometheusCAPath] = "/certs/ca/"
+				pod.Annotations[annotationPrometheusCertFile] = "/certs/server.crt"
+				pod.Annotations[annotationPrometheusKeyFile] = "/certs/key.pem"
 				return pod
 			},
-			Handler{},
+			MeshWebhook{
+				ConsulAPITimeout: 5 * time.Second,
+			},
 			`# Generate the envoy bootstrap code
 /consul/connect-inject/consul connect envoy \
   -proxy-id="$(cat /consul/connect-inject/proxyid)" \
   -prometheus-scrape-path="/scrape-path" \
   -prometheus-backend-port="20100" \
+  -prometheus-ca-file="/certs/ca.crt" \
+  -prometheus-ca-path="/certs/ca/" \
+  -prometheus-cert-file="/certs/server.crt" \
+  -prometheus-key-file="/certs/key.pem" \
   -bootstrap > /consul/connect-inject/envoy-bootstrap.yaml`,
 			"",
+			"",
+		},
+		{
+			"When providing Prometheus TLS config, missing CA gives an error",
+			func(pod *corev1.Pod) *corev1.Pod {
+				pod.Annotations[annotationService] = "web"
+				pod.Annotations[annotationEnableMetrics] = "true"
+				pod.Annotations[annotationEnableMetricsMerging] = "true"
+				pod.Annotations[annotationMergedMetricsPort] = "20100"
+				pod.Annotations[annotationPrometheusScrapePort] = "22222"
+				pod.Annotations[annotationPrometheusScrapePath] = "/scrape-path"
+				pod.Annotations[annotationPrometheusCertFile] = "/certs/server.crt"
+				pod.Annotations[annotationPrometheusKeyFile] = "/certs/key.pem"
+				return pod
+			},
+			MeshWebhook{
+				ConsulAPITimeout: 5 * time.Second,
+			},
+			"",
+			"",
+			fmt.Sprintf("Must set one of %q or %q", annotationPrometheusCAFile, annotationPrometheusCAPath),
+		},
+		{
+			"When providing Prometheus TLS config, missing cert gives an error",
+			func(pod *corev1.Pod) *corev1.Pod {
+				pod.Annotations[annotationService] = "web"
+				pod.Annotations[annotationEnableMetrics] = "true"
+				pod.Annotations[annotationEnableMetricsMerging] = "true"
+				pod.Annotations[annotationMergedMetricsPort] = "20100"
+				pod.Annotations[annotationPrometheusScrapePort] = "22222"
+				pod.Annotations[annotationPrometheusScrapePath] = "/scrape-path"
+				pod.Annotations[annotationPrometheusCAFile] = "/certs/ca.crt"
+				pod.Annotations[annotationPrometheusKeyFile] = "/certs/key.pem"
+				return pod
+			},
+			MeshWebhook{
+				ConsulAPITimeout: 5 * time.Second,
+			},
+			"",
+			"",
+			fmt.Sprintf("Must set %q", annotationPrometheusCertFile),
+		},
+		{
+			"When providing Prometheus TLS config, missing key gives an error",
+			func(pod *corev1.Pod) *corev1.Pod {
+				pod.Annotations[annotationService] = "web"
+				pod.Annotations[annotationEnableMetrics] = "true"
+				pod.Annotations[annotationEnableMetricsMerging] = "true"
+				pod.Annotations[annotationMergedMetricsPort] = "20100"
+				pod.Annotations[annotationPrometheusScrapePort] = "22222"
+				pod.Annotations[annotationPrometheusScrapePath] = "/scrape-path"
+				pod.Annotations[annotationPrometheusCAPath] = "/certs/ca/"
+				pod.Annotations[annotationPrometheusCertFile] = "/certs/server.crt"
+				return pod
+			},
+			MeshWebhook{
+				ConsulAPITimeout: 5 * time.Second,
+			},
+			"",
+			"",
+			fmt.Sprintf("Must set %q", annotationPrometheusKeyFile),
 		},
 	}
 
@@ -129,10 +208,14 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 		t.Run(tt.Name, func(t *testing.T) {
 			require := require.New(t)
 
-			h := tt.Handler
+			h := tt.Webhook
 			pod := *tt.Pod(minimal())
 			container, err := h.containerInit(testNS, pod, multiPortInfo{})
-			require.NoError(err)
+			if tt.ErrStr == "" {
+				require.NoError(err)
+			} else {
+				require.Contains(err.Error(), tt.ErrStr)
+			}
 			actual := strings.Join(container.Command, " ")
 			require.Contains(actual, tt.Cmd)
 			if tt.CmdNot != "" {
@@ -145,48 +228,24 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 func TestHandlerContainerInit_transparentProxy(t *testing.T) {
 	cases := map[string]struct {
 		globalEnabled          bool
+		cniEnabled             bool
 		annotations            map[string]string
 		expectedContainsCmd    string
 		expectedNotContainsCmd string
 		namespaceLabel         map[string]string
 	}{
-		"enabled globally, ns not set, annotation not provided": {
+		"enabled globally, ns not set, annotation not provided, cni disabled": {
 			true,
-			nil,
-			`/consul/connect-inject/consul connect redirect-traffic \
-  -proxy-id="$(cat /consul/connect-inject/proxyid)" \
-  -proxy-uid=5995`,
-			"",
-			nil,
-		},
-		"enabled globally, ns not set, annotation is false": {
-			true,
-			map[string]string{keyTransparentProxy: "false"},
-			"",
-			`/consul/connect-inject/consul connect redirect-traffic \
-  -proxy-id="$(cat /consul/connect-inject/proxyid)" \
-  -proxy-uid=5995`,
-			nil,
-		},
-		"enabled globally, ns not set, annotation is true": {
-			true,
-			map[string]string{keyTransparentProxy: "true"},
-			`/consul/connect-inject/consul connect redirect-traffic \
-  -proxy-id="$(cat /consul/connect-inject/proxyid)" \
-  -proxy-uid=5995`,
-			"",
-			nil,
-		},
-		"disabled globally, ns not set, annotation not provided": {
 			false,
 			nil,
-			"",
 			`/consul/connect-inject/consul connect redirect-traffic \
   -proxy-id="$(cat /consul/connect-inject/proxyid)" \
   -proxy-uid=5995`,
+			"",
 			nil,
 		},
-		"disabled globally, ns not set, annotation is false": {
+		"enabled globally, ns not set, annotation is false, cni disabled": {
+			true,
 			false,
 			map[string]string{keyTransparentProxy: "false"},
 			"",
@@ -195,7 +254,8 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
   -proxy-uid=5995`,
 			nil,
 		},
-		"disabled globally, ns not set, annotation is true": {
+		"enabled globally, ns not set, annotation is true, cni disabled": {
+			true,
 			false,
 			map[string]string{keyTransparentProxy: "true"},
 			`/consul/connect-inject/consul connect redirect-traffic \
@@ -204,8 +264,39 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
 			"",
 			nil,
 		},
-		"exclude-inbound-ports, ns is not set, annotation is provided": {
+		"disabled globally, ns not set, annotation not provided, cni disabled": {
+			false,
+			false,
+			nil,
+			"",
+			`/consul/connect-inject/consul connect redirect-traffic \
+  -proxy-id="$(cat /consul/connect-inject/proxyid)" \
+  -proxy-uid=5995`,
+			nil,
+		},
+		"disabled globally, ns not set, annotation is false, cni disabled": {
+			false,
+			false,
+			map[string]string{keyTransparentProxy: "false"},
+			"",
+			`/consul/connect-inject/consul connect redirect-traffic \
+  -proxy-id="$(cat /consul/connect-inject/proxyid)" \
+  -proxy-uid=5995`,
+			nil,
+		},
+		"disabled globally, ns not set, annotation is true, cni disabled": {
+			false,
+			false,
+			map[string]string{keyTransparentProxy: "true"},
+			`/consul/connect-inject/consul connect redirect-traffic \
+  -proxy-id="$(cat /consul/connect-inject/proxyid)" \
+  -proxy-uid=5995`,
+			"",
+			nil,
+		},
+		"exclude-inbound-ports, ns is not set, annotation is provided, cni disabled": {
 			true,
+			false,
 			map[string]string{
 				keyTransparentProxy:                 "true",
 				annotationTProxyExcludeInboundPorts: "9090,9091",
@@ -218,8 +309,9 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
 			"",
 			nil,
 		},
-		"exclude-outbound-ports, ns is not set, annotation is provided": {
+		"exclude-outbound-ports, ns is not set, annotation is provided, cni disabled": {
 			true,
+			false,
 			map[string]string{
 				keyTransparentProxy:                  "true",
 				annotationTProxyExcludeOutboundPorts: "9090,9091",
@@ -232,8 +324,9 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
 			"",
 			nil,
 		},
-		"exclude-outbound-cidrs annotation is provided": {
+		"exclude-outbound-cidrs annotation is provided, cni disabled": {
 			true,
+			false,
 			map[string]string{
 				keyTransparentProxy:                  "true",
 				annotationTProxyExcludeOutboundCIDRs: "1.1.1.1,2.2.2.2/24",
@@ -246,8 +339,9 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
 			"",
 			nil,
 		},
-		"exclude-uids annotation is provided, ns is not set": {
+		"exclude-uids annotation is provided, ns is not set, cni disabled": {
 			true,
+			false,
 			map[string]string{
 				keyTransparentProxy:         "true",
 				annotationTProxyExcludeUIDs: "6000,7000",
@@ -260,7 +354,8 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
 			"",
 			nil,
 		},
-		"disabled globally, ns enabled, annotation not set": {
+		"disabled globally, ns enabled, annotation not set, cni disabled": {
+			false,
 			false,
 			nil,
 			`/consul/connect-inject/consul connect redirect-traffic \
@@ -269,8 +364,9 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
 			"",
 			map[string]string{keyTransparentProxy: "true"},
 		},
-		"enabled globally, ns disabled, annotation not set": {
+		"enabled globally, ns disabled, annotation not set, cni disabled": {
 			true,
+			false,
 			nil,
 			"",
 			`/consul/connect-inject/consul connect redirect-traffic \
@@ -278,25 +374,60 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
   -proxy-uid=5995`,
 			map[string]string{keyTransparentProxy: "false"},
 		},
+		"disabled globally, ns enabled, annotation not set, cni enabled": {
+			false,
+			true,
+			nil,
+			"",
+			`/consul/connect-inject/consul connect redirect-traffic \
+  -proxy-id="$(cat /consul/connect-inject/proxyid)" \
+  -proxy-uid=5995`,
+			map[string]string{keyTransparentProxy: "true"},
+		},
+
+		"enabled globally, ns not set, annotation not set, cni enabled": {
+			true,
+			true,
+			nil,
+			"",
+			`/consul/connect-inject/consul connect redirect-traffic \
+  -proxy-id="$(cat /consul/connect-inject/proxyid)" \
+  -proxy-uid=5995`,
+			nil,
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := Handler{EnableTransparentProxy: c.globalEnabled}
+			w := MeshWebhook{
+				EnableTransparentProxy: c.globalEnabled,
+				ConsulAPITimeout:       5 * time.Second,
+				EnableCNI:              c.cniEnabled,
+			}
 			pod := minimal()
 			pod.Annotations = c.annotations
 
-			expectedSecurityContext := &corev1.SecurityContext{
-				RunAsUser:  pointerToInt64(0),
-				RunAsGroup: pointerToInt64(0),
-				Privileged: pointerToBool(true),
-				Capabilities: &corev1.Capabilities{
+			expectedSecurityContext := &corev1.SecurityContext{}
+			if !c.cniEnabled {
+				expectedSecurityContext.RunAsUser = pointer.Int64(0)
+				expectedSecurityContext.RunAsGroup = pointer.Int64(0)
+				expectedSecurityContext.RunAsNonRoot = pointer.Bool(false)
+				expectedSecurityContext.Privileged = pointer.Bool(true)
+				expectedSecurityContext.Capabilities = &corev1.Capabilities{
 					Add: []corev1.Capability{netAdminCapability},
-				},
-				RunAsNonRoot: pointerToBool(false),
+				}
+			} else {
+
+				expectedSecurityContext.RunAsUser = pointer.Int64(initContainersUserAndGroupID)
+				expectedSecurityContext.RunAsGroup = pointer.Int64(initContainersUserAndGroupID)
+				expectedSecurityContext.RunAsNonRoot = pointer.Bool(true)
+				expectedSecurityContext.Privileged = pointer.Bool(false)
+				expectedSecurityContext.Capabilities = &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				}
 			}
 			ns := testNS
 			ns.Labels = c.namespaceLabel
-			container, err := h.containerInit(ns, *pod, multiPortInfo{})
+			container, err := w.containerInit(ns, *pod, multiPortInfo{})
 			require.NoError(t, err)
 			actualCmd := strings.Join(container.Command, " ")
 
@@ -304,7 +435,11 @@ func TestHandlerContainerInit_transparentProxy(t *testing.T) {
 				require.Equal(t, expectedSecurityContext, container.SecurityContext)
 				require.Contains(t, actualCmd, c.expectedContainsCmd)
 			} else {
-				require.Nil(t, container.SecurityContext)
+				if !c.cniEnabled {
+					require.Nil(t, container.SecurityContext)
+				} else {
+					require.Equal(t, expectedSecurityContext, container.SecurityContext)
+				}
 				require.NotContains(t, actualCmd, c.expectedNotContainsCmd)
 			}
 		})
@@ -375,7 +510,12 @@ func TestHandlerContainerInit_consulDNS(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			h := Handler{EnableConsulDNS: c.globalEnabled, EnableTransparentProxy: true, ResourcePrefix: "consul-consul"}
+			w := MeshWebhook{
+				EnableConsulDNS:        c.globalEnabled,
+				EnableTransparentProxy: true,
+				ResourcePrefix:         "consul-consul",
+				ConsulAPITimeout:       5 * time.Second,
+			}
 			os.Setenv("CONSUL_CONSUL_DNS_SERVICE_HOST", "10.0.34.16")
 			defer os.Unsetenv("CONSUL_CONSUL_DNS_SERVICE_HOST")
 
@@ -384,7 +524,7 @@ func TestHandlerContainerInit_consulDNS(t *testing.T) {
 
 			ns := testNS
 			ns.Labels = c.namespaceLabel
-			container, err := h.containerInit(ns, *pod, multiPortInfo{})
+			container, err := w.containerInit(ns, *pod, multiPortInfo{})
 			require.NoError(t, err)
 			actualCmd := strings.Join(container.Command, " ")
 
@@ -414,8 +554,8 @@ func TestHandler_constructDNSServiceHostName(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.prefix, func(t *testing.T) {
-			h := Handler{ResourcePrefix: c.prefix}
-			require.Equal(t, c.result, h.constructDNSServiceHostName())
+			w := MeshWebhook{ResourcePrefix: c.prefix, ConsulAPITimeout: 5 * time.Second}
+			require.Equal(t, c.result, w.constructDNSServiceHostName())
 		})
 	}
 }
@@ -455,7 +595,7 @@ func TestHandlerContainerInit_namespacesAndPartitionsEnabled(t *testing.T) {
 	cases := []struct {
 		Name    string
 		Pod     func(*corev1.Pod) *corev1.Pod
-		Handler Handler
+		Webhook MeshWebhook
 		Cmd     string // Strings.Contains test
 	}{
 		{
@@ -464,15 +604,17 @@ func TestHandlerContainerInit_namespacesAndPartitionsEnabled(t *testing.T) {
 				pod.Annotations[annotationService] = "web"
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				EnableNamespaces:           true,
 				ConsulDestinationNamespace: "default",
 				ConsulPartition:            "",
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -consul-service-namespace="default" \
 
 # Generate the envoy bootstrap code
@@ -487,15 +629,17 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationService] = "web"
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				EnableNamespaces:           true,
 				ConsulDestinationNamespace: "default",
 				ConsulPartition:            "default",
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -partition="default" \
   -consul-service-namespace="default" \
 
@@ -512,15 +656,17 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationService] = "web"
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				EnableNamespaces:           true,
 				ConsulDestinationNamespace: "non-default",
 				ConsulPartition:            "",
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -consul-service-namespace="non-default" \
 
 # Generate the envoy bootstrap code
@@ -535,15 +681,17 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationService] = "web"
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				EnableNamespaces:           true,
 				ConsulDestinationNamespace: "non-default",
 				ConsulPartition:            "non-default-part",
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -partition="non-default-part" \
   -consul-service-namespace="non-default" \
 
@@ -560,16 +708,18 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationService] = ""
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				AuthMethod:                 "auth-method",
 				EnableNamespaces:           true,
 				ConsulDestinationNamespace: "non-default",
 				ConsulPartition:            "default",
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -acl-auth-method="auth-method" \
   -service-account-name="web" \
   -service-name="" \
@@ -592,17 +742,19 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationService] = ""
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				AuthMethod:                 "auth-method",
 				EnableNamespaces:           true,
 				ConsulDestinationNamespace: "non-default", // Overridden by mirroring
 				EnableK8SNSMirroring:       true,
 				ConsulPartition:            "non-default",
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -acl-auth-method="auth-method" \
   -service-account-name="web" \
   -service-name="" \
@@ -625,16 +777,18 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationService] = "web"
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				EnableNamespaces:           true,
 				ConsulDestinationNamespace: "default",
 				ConsulPartition:            "",
 				EnableTransparentProxy:     true,
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -consul-service-namespace="default" \
 
 # Generate the envoy bootstrap code
@@ -655,16 +809,18 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationService] = "web"
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				EnableNamespaces:           true,
 				ConsulPartition:            "default",
 				ConsulDestinationNamespace: "non-default",
 				EnableTransparentProxy:     true,
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -partition="default" \
   -consul-service-namespace="non-default" \
 
@@ -689,18 +845,20 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 				pod.Annotations[annotationService] = "web"
 				return pod
 			},
-			Handler{
+			MeshWebhook{
 				AuthMethod:                 "auth-method",
 				EnableNamespaces:           true,
 				ConsulPartition:            "non-default",
 				ConsulDestinationNamespace: "non-default", // Overridden by mirroring
 				EnableK8SNSMirroring:       true,
 				EnableTransparentProxy:     true,
+				ConsulAPITimeout:           5 * time.Second,
 			},
 			`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -acl-auth-method="auth-method" \
   -service-account-name="web" \
   -service-name="web" \
@@ -731,8 +889,8 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 		t.Run(tt.Name, func(t *testing.T) {
 			require := require.New(t)
 
-			h := tt.Handler
-			container, err := h.containerInit(testNS, *tt.Pod(minimal()), multiPortInfo{})
+			w := tt.Webhook
+			container, err := w.containerInit(testNS, *tt.Pod(minimal()), multiPortInfo{})
 			require.NoError(err)
 			actual := strings.Join(container.Command, " ")
 			require.Equal(tt.Cmd, actual)
@@ -786,7 +944,7 @@ func TestHandlerContainerInit_Multiport(t *testing.T) {
 	cases := []struct {
 		Name              string
 		Pod               func(*corev1.Pod) *corev1.Pod
-		Handler           Handler
+		Webhook           MeshWebhook
 		NumInitContainers int
 		MultiPortInfos    []multiPortInfo
 		Cmd               []string // Strings.Contains test
@@ -796,7 +954,7 @@ func TestHandlerContainerInit_Multiport(t *testing.T) {
 			func(pod *corev1.Pod) *corev1.Pod {
 				return pod
 			},
-			Handler{},
+			MeshWebhook{ConsulAPITimeout: 5 * time.Second},
 			2,
 			[]multiPortInfo{
 				{
@@ -808,10 +966,12 @@ func TestHandlerContainerInit_Multiport(t *testing.T) {
 					serviceName:  "web-admin",
 				},
 			},
-			[]string{`/bin/sh -ec 
+			[]string{
+				`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -multiport=true \
   -proxy-id-file=/consul/connect-inject/proxyid-web \
   -service-name="web" \
@@ -826,6 +986,7 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -multiport=true \
   -proxy-id-file=/consul/connect-inject/proxyid-web-admin \
   -service-name="web-admin" \
@@ -842,8 +1003,9 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 			func(pod *corev1.Pod) *corev1.Pod {
 				return pod
 			},
-			Handler{
-				AuthMethod: "auth-method",
+			MeshWebhook{
+				AuthMethod:       "auth-method",
+				ConsulAPITimeout: 5 * time.Second,
 			},
 			2,
 			[]multiPortInfo{
@@ -856,10 +1018,12 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 					serviceName:  "web-admin",
 				},
 			},
-			[]string{`/bin/sh -ec 
+			[]string{
+				`/bin/sh -ec 
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -acl-auth-method="auth-method" \
   -service-account-name="web" \
   -service-name="web" \
@@ -879,6 +1043,7 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 export CONSUL_HTTP_ADDR="${HOST_IP}:8500"
 export CONSUL_GRPC_ADDR="${HOST_IP}:8502"
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -acl-auth-method="auth-method" \
   -service-account-name="web-admin" \
   -service-name="web-admin" \
@@ -901,9 +1066,9 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 		t.Run(tt.Name, func(t *testing.T) {
 			require := require.New(t)
 
-			h := tt.Handler
+			w := tt.Webhook
 			for i := 0; i < tt.NumInitContainers; i++ {
-				container, err := h.containerInit(testNS, *tt.Pod(minimal()), tt.MultiPortInfos[i])
+				container, err := w.containerInit(testNS, *tt.Pod(minimal()), tt.MultiPortInfos[i])
 				require.NoError(err)
 				actual := strings.Join(container.Command, " ")
 				require.Equal(tt.Cmd[i], actual)
@@ -914,8 +1079,9 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 
 func TestHandlerContainerInit_authMethod(t *testing.T) {
 	require := require.New(t)
-	h := Handler{
-		AuthMethod: "release-name-consul-k8s-auth-method",
+	w := MeshWebhook{
+		AuthMethod:       "release-name-consul-k8s-auth-method",
+		ConsulAPITimeout: 5 * time.Second,
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -940,11 +1106,12 @@ func TestHandlerContainerInit_authMethod(t *testing.T) {
 			ServiceAccountName: "foo",
 		},
 	}
-	container, err := h.containerInit(testNS, *pod, multiPortInfo{})
+	container, err := w.containerInit(testNS, *pod, multiPortInfo{})
 	require.NoError(err)
 	actual := strings.Join(container.Command, " ")
 	require.Contains(actual, `
 consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD_NAMESPACE} \
+  -consul-api-timeout=5s \
   -acl-auth-method="release-name-consul-k8s-auth-method"`)
 	require.Contains(actual, `
 # Generate the envoy bootstrap code
@@ -959,8 +1126,9 @@ consul-k8s-control-plane connect-init -pod-name=${POD_NAME} -pod-namespace=${POD
 // and CA cert should be set as env variable.
 func TestHandlerContainerInit_WithTLS(t *testing.T) {
 	require := require.New(t)
-	h := Handler{
-		ConsulCACert: "consul-ca-cert",
+	w := MeshWebhook{
+		ConsulCACert:     "consul-ca-cert",
+		ConsulAPITimeout: 5 * time.Second,
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -977,7 +1145,7 @@ func TestHandlerContainerInit_WithTLS(t *testing.T) {
 			},
 		},
 	}
-	container, err := h.containerInit(testNS, *pod, multiPortInfo{})
+	container, err := w.containerInit(testNS, *pod, multiPortInfo{})
 	require.NoError(err)
 	actual := strings.Join(container.Command, " ")
 	require.Contains(actual, `
@@ -994,7 +1162,7 @@ export CONSUL_GRPC_ADDR="${HOST_IP}:8502"`)
 
 func TestHandlerContainerInit_Resources(t *testing.T) {
 	require := require.New(t)
-	h := Handler{
+	w := MeshWebhook{
 		InitContainerResources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
 				corev1.ResourceCPU:    resource.MustParse("10m"),
@@ -1005,6 +1173,7 @@ func TestHandlerContainerInit_Resources(t *testing.T) {
 				corev1.ResourceMemory: resource.MustParse("25Mi"),
 			},
 		},
+		ConsulAPITimeout: 5 * time.Second,
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1021,7 +1190,7 @@ func TestHandlerContainerInit_Resources(t *testing.T) {
 			},
 		},
 	}
-	container, err := h.containerInit(testNS, *pod, multiPortInfo{})
+	container, err := w.containerInit(testNS, *pod, multiPortInfo{})
 	require.NoError(err)
 	require.Equal(corev1.ResourceRequirements{
 		Limits: corev1.ResourceList{
@@ -1041,18 +1210,18 @@ func TestHandlerInitCopyContainer(t *testing.T) {
 
 	for _, openShiftEnabled := range openShiftEnabledCases {
 		t.Run(fmt.Sprintf("openshift enabled: %t", openShiftEnabled), func(t *testing.T) {
-			h := Handler{EnableOpenShift: openShiftEnabled}
+			w := MeshWebhook{EnableOpenShift: openShiftEnabled, ConsulAPITimeout: 5 * time.Second}
 
-			container := h.initCopyContainer()
+			container := w.initCopyContainer()
 
 			if openShiftEnabled {
 				require.Nil(t, container.SecurityContext)
 			} else {
 				expectedSecurityContext := &corev1.SecurityContext{
-					RunAsUser:              pointerToInt64(copyContainerUserAndGroupID),
-					RunAsGroup:             pointerToInt64(copyContainerUserAndGroupID),
-					RunAsNonRoot:           pointerToBool(true),
-					ReadOnlyRootFilesystem: pointerToBool(true),
+					RunAsUser:              pointer.Int64(initContainersUserAndGroupID),
+					RunAsGroup:             pointer.Int64(initContainersUserAndGroupID),
+					RunAsNonRoot:           pointer.Bool(true),
+					ReadOnlyRootFilesystem: pointer.Bool(true),
 				}
 				require.Equal(t, expectedSecurityContext, container.SecurityContext)
 			}

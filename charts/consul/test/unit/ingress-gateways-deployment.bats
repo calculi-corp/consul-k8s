@@ -22,7 +22,7 @@ load _helpers
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object | yq -r '.metadata.name' | tee /dev/stderr)
-  [ "${actual}" = "RELEASE-NAME-consul-ingress-gateway" ]
+  [ "${actual}" = "release-name-consul-ingress-gateway" ]
 }
 
 @test "ingressGateways/Deployment: serviceAccountName is set properly" {
@@ -36,7 +36,7 @@ load _helpers
       . | tee /dev/stderr |
       yq -s -r '.[0].spec.template.spec.serviceAccountName' | tee /dev/stderr)
 
-  [ "${actual}" = "RELEASE-NAME-consul-ingress-gateway" ]
+  [ "${actual}" = "release-name-consul-ingress-gateway" ]
 }
 
 @test "ingressGateways/Deployment: Adds consul service volumeMount to gateway container" {
@@ -148,7 +148,8 @@ load _helpers
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
       yq -s -r '.[0].spec.template.spec.containers[0].image' | tee /dev/stderr)
-  [ "${actual}" = "envoyproxy/envoy-alpine:v1.20.2" ]
+  [[ "${actual}" =~ "envoyproxy/envoy:v" ]]
+
 }
 
 @test "ingressGateways/Deployment: envoy image can be set using the global value" {
@@ -307,7 +308,18 @@ load _helpers
       --set 'connectInject.enabled=true' \
       --set 'global.acls.manageSystemACLs=true' \
       . | tee /dev/stderr |
-      yq -s '[.[0].spec.template.spec.containers[1].command[6]] | any(contains("-token-file=/consul/service/acl-token"))' | tee /dev/stderr)
+      yq -s '[.[0].spec.template.spec.containers[1].command[7]] | any(contains("-token-file=/consul/service/acl-token"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "ingressGateways/Deployment: consul-sidecar uses -consul-api-timeout flag" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/ingress-gateways-deployment.yaml \
+      --set 'ingressGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -s '[.[0].spec.template.spec.containers[1].command[6]] | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -931,6 +943,47 @@ load _helpers
 }
 
 #--------------------------------------------------------------------
+# topologySpreadConstraints
+
+@test "ingressGateways/Deployment: topologySpreadConstraints not set by default" { 
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/ingress-gateways-deployment.yaml \
+      --set 'ingressGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec | .topologySpreadConstraints? == null' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "ingressGateways/Deployment: topologySpreadConstraints can be set through defaults" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/ingress-gateways-deployment.yaml \
+      --set 'ingressGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'ingressGateways.defaults.topologySpreadConstraints=- key: value' \
+      . | tee /dev/stderr |
+      yq -s -r '.[0].spec.template.spec.topologySpreadConstraints[0].key' | tee /dev/stderr)
+  [ "${actual}" = "value" ]
+}
+
+@test "ingressGateways/Deployment: topologySpreadConstraints can be set through specific gateway, overriding defaults" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/ingress-gateways-deployment.yaml \
+      --set 'ingressGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'ingressGateways.topologySpreadConstraints=foobar' \
+      --set 'ingressGateways.defaults.topologySpreadConstraints=- key: value' \
+      --set 'ingressGateways.gateways[0].name=gateway1' \
+      --set 'ingressGateways.gateways[0].topologySpreadConstraints=- key: value2' \
+      . | tee /dev/stderr |
+      yq -s -r '.[0].spec.template.spec.topologySpreadConstraints[0].key' | tee /dev/stderr)
+  [ "${actual}" = "value2" ]
+}
+
+#--------------------------------------------------------------------
 # nodeSelector
 
 @test "ingressGateways/Deployment: no nodeSelector by default" {
@@ -1325,7 +1378,7 @@ key2: value2' \
   -log-level=info \
   -log-json=false \
   -k8s-namespace=default \
-  -name=RELEASE-NAME-consul-ingress-gateway \
+  -name=release-name-consul-ingress-gateway \
   -output-file=/tmp/address.txt
 WAN_ADDR="$(cat /tmp/address.txt)"
 WAN_PORT=8080
@@ -1385,9 +1438,10 @@ EOF
       yq -s -r '.[0].spec.template.spec.initContainers | map(select(.name == "ingress-gateway-init"))[0] | .command[2]' | tee /dev/stderr)
 
   exp='consul-k8s-control-plane acl-init \
-  -component-name=ingress-gateway/RELEASE-NAME-consul-ingress-gateway \
-  -acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method \
+  -component-name=ingress-gateway/release-name-consul-ingress-gateway \
+  -acl-auth-method=release-name-consul-k8s-component-auth-method \
   -token-sink-file=/consul/service/acl-token \
+  -consul-api-timeout=5s \
   -log-level=info \
   -log-json=false
 
@@ -1395,7 +1449,7 @@ consul-k8s-control-plane service-address \
   -log-level=info \
   -log-json=false \
   -k8s-namespace=default \
-  -name=RELEASE-NAME-consul-ingress-gateway \
+  -name=release-name-consul-ingress-gateway \
   -output-file=/tmp/address.txt
 WAN_ADDR="$(cat /tmp/address.txt)"
 WAN_PORT=8080
@@ -1622,10 +1676,10 @@ EOF
       yq -s -r '.' | tee /dev/stderr)
 
   local actual=$(echo $object | yq -r '.[0].metadata.name' | tee /dev/stderr)
-  [ "${actual}" = "RELEASE-NAME-consul-gateway1" ]
+  [ "${actual}" = "release-name-consul-gateway1" ]
 
   local actual=$(echo $object | yq -r '.[1].metadata.name' | tee /dev/stderr)
-  [ "${actual}" = "RELEASE-NAME-consul-gateway2" ]
+  [ "${actual}" = "release-name-consul-gateway2" ]
 
   local actual=$(echo $object | yq '.[0] | length > 0' | tee /dev/stderr)
   [ "${actual}" = "true" ]
@@ -1635,6 +1689,38 @@ EOF
 
   local actual=$(echo $object | yq '.[2] | length > 0' | tee /dev/stderr)
   [ "${actual}" = "false" ]
+}
+
+#--------------------------------------------------------------------
+# get-auto-encrypt-client-ca
+
+@test "ingressGateways/Deployment: get-auto-encrypt-client-ca uses server's stateful set address by default and passes ca cert" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/ingress-gateways-deployment.yaml  \
+      --set 'ingressGateways.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'ingressGateways.gateways[0].name=gateway1' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "get-auto-encrypt-client-ca").command | join(" ")' | tee /dev/stderr)
+
+  # check server address
+  actual=$(echo $command | jq ' . | contains("-server-addr=release-name-consul-server")')
+  [ "${actual}" = "true" ]
+
+  # check server port
+  actual=$(echo $command | jq ' . | contains("-server-port=8501")')
+  [ "${actual}" = "true" ]
+
+  # check server's CA cert
+  actual=$(echo $command | jq ' . | contains("-ca-file=/consul/tls/ca/tls.crt")')
+  [ "${actual}" = "true" ]
+
+  # check consul-api-timeout
+  actual=$(echo $command | jq ' . | contains("-consul-api-timeout=5s")')
+  [ "${actual}" = "true" ]
 }
 
 #--------------------------------------------------------------------

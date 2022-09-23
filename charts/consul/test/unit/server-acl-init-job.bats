@@ -110,6 +110,17 @@ load _helpers
   [ "${actual}" = "false" ]
 }
 
+@test "serverACLInit/Job: sets -consul-api-timeout=5s" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/server-acl-init-job.yaml  \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command[2] | contains("-consul-api-timeout=5s")' |
+      tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
 @test "serverACLInit/Job: sets -client=false when client is disabled" {
   cd `chart_dir`
   local actual=$(helm template \
@@ -1372,6 +1383,37 @@ load _helpers
 
   local actual=$(echo $object |
     yq 'any(contains("inject-k8s-namespace-mirroring-prefix"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# cluster peering
+
+@test "serverACLInit/Job: cluster peering disabled by default" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/server-acl-init-job.yaml  \
+      --set 'global.acls.manageSystemACLs=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+    yq 'any(contains("enable-peering"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "serverACLInit/Job: cluster peering enabled when peering is enabled" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/server-acl-init-job.yaml  \
+      --set 'global.acls.manageSystemACLs=true' \
+      --set 'global.peering.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+    yq 'any(contains("enable-peering"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 

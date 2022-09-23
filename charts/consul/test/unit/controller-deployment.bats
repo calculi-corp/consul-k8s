@@ -19,6 +19,76 @@ load _helpers
   [ "${actual}" = "true" ]
 }
 
+@test "controller/Deployment: command defaults" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/controller-deployment.yaml \
+      --set 'controller.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("consul-k8s-control-plane controller"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# resourcePrefix
+
+@test "controller/Deployment: resource-prefix flag is set on command" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.enableConsulNamespaces=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-resource-prefix=release-name-consul"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# enable-webhook-ca-update
+
+@test "controller/Deployment: enable-webhook-ca-update flag is not set on command by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.enableConsulNamespaces=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-enable-webhook-ca-update"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "controller/Deployment: enable-webhook-ca-update flag is not set on command when using vault" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.enableConsulNamespaces=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=test' \
+      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'global.secretsBackend.vault.ca.secretKey=tls.crt' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-enable-webhook-ca-update"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
 #--------------------------------------------------------------------
 # replicas
 
@@ -53,7 +123,7 @@ load _helpers
       --set 'controller.enabled=true' \
       --set 'global.acls.manageSystemACLs=true' \
       . | tee /dev/stderr |
-      yq '[.spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]] | any(contains("consul-k8s-control-plane consul-logout"))' | tee /dev/stderr)
+      yq '[.spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]] | any(contains("consul-k8s-control-plane consul-logout -consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -103,6 +173,10 @@ load _helpers
       yq '[.env[1].value] | any(contains("http://$(HOST_IP):8500"))' | tee /dev/stderr)
       echo $actual
   [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
 }
 
 @test "controller/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled" {
@@ -135,6 +209,10 @@ load _helpers
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
 }
 
 @test "controller/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command with Partitions enabled" {
@@ -155,7 +233,7 @@ load _helpers
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
-      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method"))' | tee /dev/stderr)
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
@@ -177,6 +255,10 @@ load _helpers
 
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -210,6 +292,10 @@ load _helpers
 
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-auto-encrypt-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -250,7 +336,7 @@ load _helpers
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
-      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
@@ -304,6 +390,17 @@ load _helpers
   # check that the volume uses the provided secret key
   actual=$(echo $ca_cert_volume | jq -r '.secret.items[0].key' | tee /dev/stderr)
   [ "${actual}" = "key" ]
+}
+
+@test "controller/Deployment: Adds -webhook-tls-cert-dir=/tmp/controller-webhook/certs to command" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-webhook-tls-cert-dir=/tmp/controller-webhook/certs"))' | tee /dev/stderr)
+  [ "${actual}" != "" ]
 }
 
 #--------------------------------------------------------------------
@@ -743,6 +840,36 @@ load _helpers
 }
 
 #--------------------------------------------------------------------
+# get-auto-encrypt-client-ca
+
+@test "controller/Deployment: get-auto-encrypt-client-ca uses server's stateful set address by default and passes ca cert" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "get-auto-encrypt-client-ca").command | join(" ")' | tee /dev/stderr)
+
+  # check server address
+  actual=$(echo $command | jq ' . | contains("-server-addr=release-name-consul-server")')
+  [ "${actual}" = "true" ]
+
+  # check server port
+  actual=$(echo $command | jq ' . | contains("-server-port=8501")')
+  [ "${actual}" = "true" ]
+
+  # check server's CA cert
+  actual=$(echo $command | jq ' . | contains("-ca-file=/consul/tls/ca/tls.crt")')
+  [ "${actual}" = "true" ]
+
+  # check consul-api-timeout
+  actual=$(echo $command | jq ' . | contains("-consul-api-timeout=5s")')
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
 # Vault
 
 @test "controller/Deployment: vault CA is not configured by default" {
@@ -841,11 +968,21 @@ load _helpers
       --set 'global.secretsBackend.vault.enabled=true' \
       --set 'global.secretsBackend.vault.consulClientRole=foo' \
       --set 'global.secretsBackend.vault.consulServerRole=bar' \
-      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
       --set 'global.tls.enabled=true' \
       --set 'global.tls.enableAutoEncrypt=true' \
       --set 'server.serverCert.secretName=pki_int/issue/test' \
       --set 'global.tls.caCert.secretName=pki_int/cert/ca' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=pki/issue/controller-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
       . | tee /dev/stderr |
       yq -r '.spec.template.metadata' | tee /dev/stderr)
 
@@ -859,6 +996,19 @@ load _helpers
   [ "${actual}" = "pki_int/cert/ca" ]
 
   local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-ca.crt"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"foo/ca\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-ca.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "foo/ca" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/secret-volume-path-ca.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "/vault/secrets/controller-webhook/certs" ]
+  
+  local actual="$(echo $cmd |
       yq -r '.annotations["vault.hashicorp.com/agent-init-first"]' | tee /dev/stderr)"
   [ "${actual}" = "true" ]
 
@@ -869,8 +1019,184 @@ load _helpers
   local actual="$(echo $cmd |
       yq -r '.annotations["vault.hashicorp.com/role"]' | tee /dev/stderr)"
   [ "${actual}" = "test" ]
+
+    local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-tls.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "pki/issue/controller-webhook-cert-dc1" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-tls.crt"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"pki/issue/controller-webhook-cert-dc1\" \"common_name=release-name-consul-controller-webhook\"\n\"alt_names=release-name-consul-controller-webhook,release-name-consul-controller-webhook.default,release-name-consul-controller-webhook.default.svc,release-name-consul-controller-webhook.default.svc.cluster.local\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/secret-volume-path-tls.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "/vault/secrets/controller-webhook/certs" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-tls.key"]' | tee /dev/stderr)"
+  [ "${actual}" = "pki/issue/controller-webhook-cert-dc1" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-tls.key"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"pki/issue/controller-webhook-cert-dc1\" \"common_name=release-name-consul-controller-webhook\"\n\"alt_names=release-name-consul-controller-webhook,release-name-consul-controller-webhook.default,release-name-consul-controller-webhook.default.svc,release-name-consul-controller-webhook.default.svc.cluster.local\" -}}\n{{- .Data.private_key -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/secret-volume-path-tls.key"]' | tee /dev/stderr)"
+  [ "${actual}" = "/vault/secrets/controller-webhook/certs" ]
 }
 
+@test "controller/Deployment: vault does not add cert volume when global.tls.enabled is true" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'controller.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.volumes[] | select(.name == "cert")' | tee /dev/stderr)
+  [ "${actual}" == "" ]
+}
+
+@test "controller/Deployment: vault does not add cert volumeMounts when global.tls.enabled is true" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'controller.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].volumeMounts[] | select(.name == "cert")' | tee /dev/stderr)
+  [ "${actual}" == "" ]
+}
+
+@test "controller/Deployment: vault webhook-tls-cert-dir flag is set to /vault/secrets" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-webhook-tls-cert-dir=/vault/secrets"))' | tee /dev/stderr)
+
+  [ "${actual}" = "true" ]
+}
+
+@test "controller/Deployment: fails if vault is enabled and global.secretsBackend.vault.controllerRole is set but global.secretsBackend.vault.connectInject.tlsCert.secretName and global.secretsBackend.vault.connectInject.caCert.secretName are not" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      --set 'global.secretsBackend.vault.controllerRole=controllerinjectcarole' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "When one of the following has been set, all must be set:  global.secretsBackend.vault.connectInjectRole, global.secretsBackend.vault.connectInject.tlsCert.secretName, global.secretsBackend.vault.connectInject.caCert.secretName, global.secretsBackend.vault.controllerRole, global.secretsBackend.vault.controller.tlsCert.secretName, and global.secretsBackend.vault.controller.caCert.secretName." ]]
+}
+
+@test "controller/Deployment: fails if vault is enabled and global.secretsBackend.vault.controller.tlsCert.secretName is set but global.secretsBackend.vault.connectInjectRole and global.secretsBackend.vault.connectInject.caCert.secretName are not" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "When one of the following has been set, all must be set:  global.secretsBackend.vault.connectInjectRole, global.secretsBackend.vault.connectInject.tlsCert.secretName, global.secretsBackend.vault.connectInject.caCert.secretName, global.secretsBackend.vault.controllerRole, global.secretsBackend.vault.controller.tlsCert.secretName, and global.secretsBackend.vault.controller.caCert.secretName." ]]
+}
+
+@test "controller/Deployment: fails if vault is enabled and global.secretsBackend.vault.controller.caCert.secretName is set but global.secretsBackend.vault.connectInjectRole and global.secretsBackend.vault.connectInject.tlsCert.secretName are not" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "When one of the following has been set, all must be set:  global.secretsBackend.vault.connectInjectRole, global.secretsBackend.vault.connectInject.tlsCert.secretName, global.secretsBackend.vault.connectInject.caCert.secretName, global.secretsBackend.vault.controllerRole, global.secretsBackend.vault.controller.tlsCert.secretName, and global.secretsBackend.vault.controller.caCert.secretName." ]]
+}
+
+@test "controller/Deployment: vault vault.hashicorp.com/role set to global.secretsBackend.vault.controllerRole if global.secretsBackend.vault.controllerRole is not set" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/controller-deployment.yaml  \
+      --set 'controller.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'server.serverCert.secretName=pki_int/issue/test' \
+      --set 'global.tls.caCert.secretName=pki_int/cert/ca' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata' | tee /dev/stderr)
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/role"]' | tee /dev/stderr)"
+  [ "${actual}" = "test2" ]
+}
 #--------------------------------------------------------------------
 # Vault agent annotations
 

@@ -1,32 +1,242 @@
+## 0.48.0 (September 01, 2022)
+
+FEATURES:
+* MaxInboundConnections in service-defaults CRD
+  * Add support for MaxInboundConnections on the Service Defaults CRD. [[GH-1437](https://github.com/hashicorp/consul-k8s/pull/1437)]
+* Consul CNI Plugin
+  * CNI Plugin for Consul-k8s [[GH-1465](https://github.com/hashicorp/consul-k8s/pull/1456)]
+* Kubernetes 1.24 Support
+  * Add support for Kubernetes 1.24 where ServiceAccounts no longer have long-term JWT tokens. [[GH-1431](https://github.com/hashicorp/consul-k8s/pull/1431)]
+  * Upgrade kubeVersion in helm chart to support Kubernetes 1.21+.
+
+BREAKING CHANGES:
+* Kubernetes 1.24 Support
+  * Users deploying multiple services to the same Pod (multiport) on Kubernetes 1.24 must also deploy a Kubernetes Secret for each ServiceAccount associated with the Consul service. The name of the Secret must match the ServiceAccount name and be of type `kubernetes.io/service-account-token` [[GH-1431](https://github.com/hashicorp/consul-k8s/pull/1431)]
+  * Kubernetes 1.19 and 1.20 are no longer supported.
+
+  Example:
+
+  ```yaml
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: svc1
+    annotations:
+      kubernetes.io/service-account.name: svc1
+  type: kubernetes.io/service-account-token
+  ---
+  apiVersion: v1
+  kind: Secret
+  metadata:
+    name: svc2
+    annotations:
+      kubernetes.io/service-account.name: svc2
+  type: kubernetes.io/service-account-token
+  ```
+
+* Control Plane
+  * Rename flag `server-address` to `token-server-address` in the `inject-connect` subcommand to avoid overloading the context of the `server-address` flag. [[GH-1426](https://github.com/hashicorp/consul-k8s/pull/1426)]
+
+IMPROVEMENTS:
+* CLI:
+  * Display clusters by their short names rather than FQDNs for the `proxy read` command. [[GH-1412](https://github.com/hashicorp/consul-k8s/pull/1412)]
+  * Display a message when `proxy list` returns no results. [[GH-1412](https://github.com/hashicorp/consul-k8s/pull/1412)]
+  * Display a warning when a user passes a field and table filter combination to `proxy read` where the given field is not present in any of the output tables. [[GH-1412](https://github.com/hashicorp/consul-k8s/pull/1412)]
+  * Extend the timeout for `consul-k8s proxy read` to establish a connection from 5s to 10s. [[GH-1442](https://github.com/hashicorp/consul-k8s/pull/1442)]
+  * Expand the set of Envoy Listener Filters that may be parsed and output to the Listeners table. [[GH-1442](https://github.com/hashicorp/consul-k8s/pull/1442)]
+* Helm:
+  * The default Envoy proxy image is now `envoyproxy/envoy:v1.23.1`. [[GH-1473](https://github.com/hashicorp/consul-k8s/pull/1473)]
+
+BUG FIXES:
+* Helm
+  * API Gateway: Configure ACL auth for controller correctly when deployed in secondary datacenter with federation enabled [[GH-1462](https://github.com/hashicorp/consul-k8s/pull/1462)]
+* CLI
+  * Fix issue where SNI filters for Terminating Gateways showed up as blank lines. [[GH-1442](https://github.com/hashicorp/consul-k8s/pull/1442)]
+  * Fix issue where Logical DNS endpoints were being displayed alongside cluster names. [[GH-1452](https://github.com/hashicorp/consul-k8s/pull/1452)]
+
+## 0.47.1 (August 12, 2022)
+
+BUG FIXES:
+* Helm
+  * Update the version of the `imageK8S` in `values.yaml` to the latest control-plane image. [[GH-1355](https://github.com/hashicorp/consul-k8s/pull/1352)]
+
+## 0.47.0 (August 12, 2022)
+
+FEATURES:
+* Transparent Proxy Egress
+  * Add support for Destinations on the Service Defaults CRD. [[GH-1352](https://github.com/hashicorp/consul-k8s/pull/1352)]
+* CLI:
+  * Add `consul-k8s proxy list` command for displaying Pods running Envoy managed by Consul. [[GH-1271](https://github.com/hashicorp/consul-k8s/pull/1271)]
+  * Add `consul-k8s proxy read podname` command for displaying Envoy configuration for a given Pod. [[GH-1271](https://github.com/hashicorp/consul-k8s/pull/1271)]
+* [Experimental] Cluster Peering:
+  * Add support for ACLs and TLS. [[GH-1343](https://github.com/hashicorp/consul-k8s/pull/1343)] [[GH-1366](https://github.com/hashicorp/consul-k8s/pull/1366)]
+  * Add support for Load Balancers or external addresses in front of Consul servers for peering stream.
+    * Support new expose-servers Kubernetes Service deployed by Helm chart to expose the Consul servers, and using the service address in the peering token. [[GH-1378](https://github.com/hashicorp/consul-k8s/pull/1378)]
+    * Support non-default partitions by using `externalServers.hosts` as the server addresses in the peering token. [[GH-1384](https://github.com/hashicorp/consul-k8s/pull/1384)]
+    * Support arbitrary addresses as the server addresses in the peering token via `global.peering.tokenGeneration.source="static"` and `global.peering.tokenGeneration.static=["sample-server-address:8502"]`. [[GH-1392](https://github.com/hashicorp/consul-k8s/pull/1392)]
+  * Generate new peering token only on user-triggered events. [[GH-1399](https://github.com/hashicorp/consul-k8s/pull/1399)]
+
+IMPROVEMENTS:
+* Helm
+  * Bump default Envoy version to 1.22.4. [[GH-1413](https://github.com/hashicorp/consul-k8s/pull/1413)]
+  * Added support for Consul API Gateway to read ReferenceGrant custom resources. This will require either installing Consul API Gateway CRDs from the upcoming v0.4.0 release with `kubectl apply --kustomize "github.com/hashicorp/consul-api-gateway/config/crd?ref=v0.4.0"` or manually installing the ReferenceGrant CRD from the Gateway API v0.5 [Experimental Channel](https://gateway-api.sigs.k8s.io/concepts/versioning/#release-channels-eg-experimental-standard) when setting `apiGateway.enabled=true` [[GH-1299](https://github.com/hashicorp/consul-k8s/pull/1299)]
+
+BUG FIXES:
+* Helm
+  * Fix permissions in client-daemonset and server-statefulset when using extra-config volumes to prevent errors on OpenShift. [[GH-1307](https://github.com/hashicorp/consul-k8s/pull/1307)]
+
+## 0.46.1 (July 26, 2022)
+
+IMPROVEMENTS:
+* Control Plane
+  * Update alpine to 3.16 in the Docker image. [[GH-1372](https://github.com/hashicorp/consul-k8s/pull/1372)]
+
+## 0.46.0 (July 20, 2022)
+
+FEATURES:
+* [Experimental] Cluster Peering:
+  * Add support for secret watchers on the Peering Acceptor and Peering Dialer controllers. [[GH-1284](https://github.com/hashicorp/consul-k8s/pull/1284)]
+  * Add support for version annotation on the Peering Acceptor and Peering Dialer controllers. [[GH-1302](https://github.com/hashicorp/consul-k8s/pull/1302)]
+  * Add validation webhooks for the Peering Acceptor and Peering Dialer CRDs. [[GH-1310](https://github.com/hashicorp/consul-k8s/pull/1310)]
+  * Add Conditions to the status of the Peering Acceptor and Peering Dialer CRDs. [[GH-1335](https://github.com/hashicorp/consul-k8s/pull/1335)]
+
+IMPROVEMENTS:
+* Control Plane
+  * Added annotations `consul.hashicorp.com/prometheus-ca-file`, `consul.hashicorp.com/prometheus-ca-path`, `consul.hashicorp.com/prometheus-cert-file`, and `consul.hashicorp.com/prometheus-key-file` for configuring TLS scraping on Prometheus metrics endpoints for Envoy sidecars. To enable, set the cert and key file annotations along with one of the ca file/path annotations. [[GH-1303](https://github.com/hashicorp/consul-k8s/pull/1303)]
+  * Added annotations `consul.hashicorp.com/consul-sidecar-user-volume` and `consul.hashicorp.com/consul-sidecar-user-volume-mount` for attaching Volumes and VolumeMounts to the Envoy sidecar. Both should be JSON objects. [[GH-1315](https://github.com/hashicorp/consul-k8s/pull/1315)]
+  * Update minimum go version for project to 1.18 [[GH-1292](https://github.com/hashicorp/consul-k8s/pull/1292)]
+* Helm
+  * Added `connectInject.annotations` and `syncCatalog.annotations` values for setting annotations on connect inject and sync catalog deployments. [[GH-775](https://github.com/hashicorp/consul-k8s/pull/775)]
+  * Added PodDisruptionBudget to the connect injector deployment which can be configured using the `connectInject.disruptionBudget` stanza. [[GH-1316](https://github.com/hashicorp/consul-k8s/pull/1316)]
+* CLI
+  * Update minimum go version for project to 1.18 [[GH-1292](https://github.com/hashicorp/consul-k8s/pull/1292)]
+
+BUG FIXES:
+* Helm
+  * When using Openshift do not set securityContext in gossip-encryption-autogenerate job. [[GH-1308](https://github.com/hashicorp/consul-k8s/pull/1308)]
+* Control Plane
+  * Fix missing RBAC permissions for the peering controllers to be able to update secrets. [[GH-1359](https://github.com/hashicorp/consul-k8s/pull/1359)]
+  * Fix a bug in the peering controller where we tried to read the secret from the cache right after creating it. [[GH-1359](https://github.com/hashicorp/consul-k8s/pull/1359)]
+
+## 0.45.0 (June 17, 2022)
+FEATURES:
+* [Experimental] Cluster Peering: Support Consul cluster peering, which allows service connectivity between two independent clusters.
+  [[GH-1273](https://github.com/hashicorp/consul-k8s/pull/1273)]
+
+  Enabling peering will deploy the peering controllers and PeeringAcceptor and PeeringDialer CRDs. The new CRDs are used
+  to establish a peering connection between two clusters.
+
+  See the [Cluster Peering on Kubernetes](https://www.consul.io/docs/connect/cluster-peering/k8s)
+  for full instructions.
+
+  Requirements:
+  * Consul 1.13+
+  * `global.peering.enabled=true` and `connectInject.enabled=true` must be set to enable peering.
+  * Mesh gateways are required for service to service communication across peers, i.e `meshGateway.enabled=true`.
+
+IMPROVEMENTS:
+* Helm
+  * Enable the configuring of snapshot intervals in the client snapshot agent via `client.snapshotAgent.interval`. [[GH-1235](https://github.com/hashicorp/consul-k8s/pull/1235)]
+  * Enable configuring the pod topologySpreadConstraints for mesh, terminating, and ingress gateways. [[GH-1257](https://github.com/hashicorp/consul-k8s/pull/1257)]
+  * Present Consul server CA chain when using Vault secrets backend. [[GH-1251](https://github.com/hashicorp/consul-k8s/pull/1251)]
+  * API Gateway: Enable configuring of the new High Availability feature (requires Consul API Gateway v0.3.0+). [[GH-1261](https://github.com/hashicorp/consul-k8s/pull/1261)]
+  * Enable the configuration of Envoy proxy concurrency via `connectInject.sidecarProxy.concurrency` which can
+    be overridden at the pod level via the annotation `consul.hashicorp.com/consul-envoy-proxy-concurrency`.
+    This PR also sets the default concurrency for envoy proxies to `2`. [[GH-1277](https://github.com/hashicorp/consul-k8s/pull/1277)]
+  * Update Mesh CRD with Mesh HTTP Config. [[GH-1282](https://github.com/hashicorp/consul-k8s/pull/1282)]
+* Control Plane
+  * Bump Dockerfile base image for RedHat UBI `consul-k8s-control-plane` image to `ubi-minimal:8.6`. [[GH-1244](https://github.com/hashicorp/consul-k8s/pull/1244)]
+  * Add additional metadata to service instances registered via catalog sync. [[GH-447](https://github.com/hashicorp/consul-k8s/pull/447)]
+  * Enable configuring Connect Injector and Controller Webhooks' certificates to be managed by Vault. [[GH-1191](https://github.com/hashicorp/consul-k8s/pull/1191/)]
+
+BUG FIXES:
+* Helm
+  * Update client-snapshot-agent so that setting `client.snapshotAgent.caCert` no longer requires root access to modify the trust store. [[GH-1190](https://github.com/hashicorp/consul-k8s/pull/1190/)]
+  * Add missing vault agent annotations to the `api-gateway-controller-deployment`. [[GH-1247](https://github.com/hashicorp/consul-k8s/pull/1247)]
+  * Bump default Envoy version to 1.22.2. [[GH-1276](https://github.com/hashicorp/consul-k8s/pull/1276)]
+
+## 0.44.0 (May 17, 2022)
+
+BREAKING CHANGES:
+* Helm
+  * Using the Vault integration requires Consul 1.12.0+. [[GH-1213](https://github.com/hashicorp/consul-k8s/pull/1213)], [[GH-1218](https://github.com/hashicorp/consul-k8s/pull/1218)]
+  * The default Envoy proxy image is now `envoyproxy/envoy:v1.22.0` which is no longer alpine based. The default trust store location is no longer `/etc/ssl/cert.pem`, please use `/etc/ssl/certs/ca-certificates.crt` when configuring Terminating Gateway configuration entries for non-alpine based Envoy images. See [[docs](https://www.consul.io/docs/k8s/connect/terminating-gateways#create-the-configuration-entry-for-the-terminating-gateway)].
+
+IMPROVEMENTS:
+* Helm
+  * Enable the ability to `configure global.consulAPITimeout` to configure how long requests to the Consul API will wait to resolve before canceling.  The default value is 5 seconds. [[GH-1178](https://github.com/hashicorp/consul-k8s/pull/1178)]
+
+BUG FIXES:
+* Security 
+  * Bump golang.org/x/crypto and golang.org/x/text dependencies to address CVE-2022-27291 and CVE-2021-38561 respectively on both CLI and Control Plane. There's no known exposure within Consul on Kubernetes as the dependencies are not invoked. [[GH-1189](https://github.com/hashicorp/consul-k8s/pull/1189)]
+* Control Plane
+  * Endpoints Controller queuing up service registrations/deregistrations when request to agent on a terminated pod does not time out. This could result in pods not being registered and service instances not being deregistered. [[GH-1178](https://github.com/hashicorp/consul-k8s/pull/1178)]
+* Helm
+  * Update client-daemonset to include ca-cert volumeMount only when tls is enabled. [[GH-1194](https://github.com/hashicorp/consul-k8s/pull/1194)]
+  * Update create-federation-secret-job to look up the automatically generated gossip encryption key by the right name when global.name is unset or set to something other than consul. [[GH-1196](https://github.com/hashicorp/consul-k8s/pull/1196)]
+  * Add Admin Partitions support to Sync Catalog **(Consul Enterprise only)**. [[GH-1180](https://github.com/hashicorp/consul-k8s/pull/1180)]
+  * Correct webhook-cert-manager-clusterrole to utilize the web-cert-manager podsecuritypolicy rather than connect-injectors when `global.enablePodSecurityPolicies` is true. [[GH-1202](https://github.com/hashicorp/consul-k8s/pull/1202)]
+  * Enable Consul auto-reload-config only when Vault is enabled. [[GH-1213](https://github.com/hashicorp/consul-k8s/pull/1213)]
+  * Revert TLS config to be compatible with Consul 1.11. [[GH-1218](https://github.com/hashicorp/consul-k8s/pull/1218)]
+
+## 0.43.0 (April 21, 2022)
+
+BREAKING CHANGES:
+* Helm
+  * Requires Consul 1.12.0+ as the Server statefulsets are now provisioned with Consul `-auto-reload-config` flag which monitors changes to specific Consul configuration properties and reloads itself when changes are detected. [[GH-1135](https://github.com/hashicorp/consul-k8s/pull/1135)]
+  * API Gateway: Re-use connectInject.consulNamespaces instead of requiring that apiGateway.consulNamespaces have the same value when ACLs are enabled. [[GH-1169](https://github.com/hashicorp/consul-k8s/pull/1169)]
+
+FEATURES:
+* Control Plane
+    * Add a `"consul.hashicorp.com/kubernetes-service"` annotation for pods to specify which Kubernetes service they want to use for registration when multiple services target the same pod. [[GH-1150](https://github.com/hashicorp/consul-k8s/pull/1150)]
+
+BUG FIXES:
+* CLI
+  * Fix issue where clusters not in the same namespace as their deployment name could not be upgraded. [[GH-1115](https://github.com/hashicorp/consul-k8s/pull/1115)]
+  * Fix issue where the CLI was looking for secrets in namespaces other than the namespace targeted by the release. [[GH-1156](https://github.com/hashicorp/consul-k8s/pull/1156)]
+  * Fix issue where the federation secret was not being found in certain configurations. [[GH-1154](https://github.com/hashicorp/consul-k8s/pull/1154)]
+* Control Plane
+  * Fix issue where upgrading a deployment from non-service mesh to service mesh would cause Pods to hang in init. [[GH-1136](https://github.com/hashicorp/consul-k8s/pull/1136)]
+* Helm
+  * Respect client nodeSelector, tolerations, and priorityClass when scheduling `create-federation-secret` Job. [[GH-1108](https://github.com/hashicorp/consul-k8s/issues/1108)]
+
+IMPROVEMENTS:
+* Control Plane
+  * Support new annotation for mounting connect-inject volume to other containers. [[GH-1111](https://github.com/hashicorp/consul-k8s/pull/1111)]
+* Helm
+  * API Gateway: Allow controller to read ReferencePolicy in order to determine if route is allowed for backend in different namespace. [[GH-1148](https://github.com/hashicorp/consul-k8s/pull/1148)]
+  * Allow `consul` to be a destination namespace. [[GH-1163](https://github.com/hashicorp/consul-k8s/pull/1163)]
+  * CRDs: Update Mesh and Ingress Gateway CRDs to support TLS config. [[GH-1168](https://github.com/hashicorp/consul-k8s/pull/1168)]
+
 ## 0.42.0 (April 04, 2022)
 
 BREAKING CHANGES:
 * Helm
   * Minimum Kubernetes version supported is 1.19 and now matches what is stated in the `README.md` file.  [[GH-1049](https://github.com/hashicorp/consul-k8s/pull/1049)] 
 * ACLs
-  * Support Terminating Gateway obtaining an ACL token using a k8s auth method. [GH-1102](https://github.com/hashicorp/consul-k8s/pull/1102)
+  * Support Terminating Gateway obtaining an ACL token using a k8s auth method. [[GH-1102](https://github.com/hashicorp/consul-k8s/pull/1102)]
     * **Note**: If you have updated a token with a new policy for a terminating gateway, this will not apply any more as ACL tokens will be ephemeral and are issued to the terminating gateways when the pod is created and destroyed when the pod is stopped. To achieve the same ACL permissions, you will need to assign the policy to the role for the terminating gateway, rather than the token.  
-  * Support Mesh Gateway obtaining an ACL token using a k8s auth method. [GH-1102](https://github.com/hashicorp/consul-k8s/pull/1102)
+  * Support Mesh Gateway obtaining an ACL token using a k8s auth method. [[GH-1102](https://github.com/hashicorp/consul-k8s/pull/1102)]
     * **Note**: This is a breaking change if you are using a mesh gateway with mesh federation. To properly configure mesh federation with mesh gateways, you will need to configure the `global.federation.k8sAuthMethodHost` in secondary datacenters to point to the address of the Kubernetes API server of the secondary datacenter.  This address must be reachable from the Consul servers in the primary datacenter.
   * **General Note on old ACL Tokens**:  As of this release, ACL tokens no longer need to be stored as Kubernetes secrets. They will transparently be provisioned by the Kubernetes Auth Method when client and component pods are provisioned and will also be destroyed when client and component pods are destroyed.  Old ACL tokens, however, will still exist as Kubernetes secrets and in Consul and will need to be identified and manually deleted.
 
 FEATURES:
 * ACLs: Enable issuing ACL tokens via Consul login with a Kubernetes Auth Method and replace the need for storing ACL tokens as Kubernetes secrets.
-  * Support CRD controller obtaining an ACL token via using a k8s auth method. [GH-995](https://github.com/hashicorp/consul-k8s/pull/995)
-  * Support Connect Inject obtaining an ACL token via using a k8s auth method. [GH-1076](https://github.com/hashicorp/consul-k8s/pull/1076)
-  * Support Sync Catalog obtaining an ACL token via using a k8s auth method. [GH-1081](https://github.com/hashicorp/consul-k8s/pull/1081), [GHT-1077](https://github.com/hashicorp/consul-k8s/pull/1077)
-  * Support API Gateway controller obtaining an ACL token via using a k8s auth method. [GH-1083](https://github.com/hashicorp/consul-k8s/pull/1083)
-  * Support Snapshot Agent obtaining an ACL token via using a k8s auth method. [GH-1084](https://github.com/hashicorp/consul-k8s/pull/1084)
-  * Support Mesh Gateway obtaining an ACL token via using a k8s auth method. [GH-1085](https://github.com/hashicorp/consul-k8s/pull/1085)
-  * Support Ingress Gateway obtaining an ACL token via using a k8s auth method. [GH-1118](https://github.com/hashicorp/consul-k8s/pull/1118)
-  * Support Terminating Gateway obtaining an ACL token via using a k8s auth method. [GH-1102](https://github.com/hashicorp/consul-k8s/pull/1102)
-  * Support Consul Client obtaining an ACL token via using a k8s auth method. [GH-1093](https://github.com/hashicorp/consul-k8s/pull/1093)
-  * Support issuing global ACL tokens via k8s auth method. [GH-1075](https://github.com/hashicorp/consul-k8s/pull/1075)
+  * Support CRD controller obtaining an ACL token via using a k8s auth method. [[GH-995](https://github.com/hashicorp/consul-k8s/pull/995)]
+  * Support Connect Inject obtaining an ACL token via using a k8s auth method. [[GH-1076](https://github.com/hashicorp/consul-k8s/pull/1076)]
+  * Support Sync Catalog obtaining an ACL token via using a k8s auth method. [[GH-1081](https://github.com/hashicorp/consul-k8s/pull/1081)], [[GHT-1077](https://github.com/hashicorp/consul-k8s/pull/1077)]
+  * Support API Gateway controller obtaining an ACL token via using a k8s auth method. [[GH-1083](https://github.com/hashicorp/consul-k8s/pull/1083)]
+  * Support Snapshot Agent obtaining an ACL token via using a k8s auth method. [[GH-1084](https://github.com/hashicorp/consul-k8s/pull/1084)]
+  * Support Mesh Gateway obtaining an ACL token via using a k8s auth method. [[GH-1085](https://github.com/hashicorp/consul-k8s/pull/1085)]
+  * Support Ingress Gateway obtaining an ACL token via using a k8s auth method. [[GH-1118](https://github.com/hashicorp/consul-k8s/pull/1118)]
+  * Support Terminating Gateway obtaining an ACL token via using a k8s auth method. [[GH-1102](https://github.com/hashicorp/consul-k8s/pull/1102)]
+  * Support Consul Client obtaining an ACL token via using a k8s auth method. [[GH-1093](https://github.com/hashicorp/consul-k8s/pull/1093)]
+  * Support issuing global ACL tokens via k8s auth method. [[GH-1075](https://github.com/hashicorp/consul-k8s/pull/1075)]
   
   
 IMPROVEMENTS:
 * Control Plane
-  * Upgrade Docker image Alpine version from 3.14 to 3.15. [[GH-1058](https://github.com/hashicorp/consul-k8s/pull/1058)]
+  * Upgrade Docker image Alpine version from 3.14 to 3.15. [[GH-1058](https://github.com/hashicorp/consul-k8s/pull/1058)
 * Helm
   * API Gateway: Allow controller to read Kubernetes namespaces in order to determine if route is allowed for gateway. [[GH-1092](https://github.com/hashicorp/consul-k8s/pull/1092)]
   * Support a pre-configured bootstrap ACL token. [[GH-1125](https://github.com/hashicorp/consul-k8s/pull/1125)]

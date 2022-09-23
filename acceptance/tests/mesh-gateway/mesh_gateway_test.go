@@ -15,7 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const staticClientName = "static-client"
+const StaticClientName = "static-client"
 
 // Test that Connect and wan federation over mesh gateways work in a default installation
 // i.e. without ACLs because TLS is required for WAN federation over mesh gateways.
@@ -104,8 +104,8 @@ func TestMeshGatewayDefault(t *testing.T) {
 		k8s.RunKubectl(t, primaryContext.KubectlOptions(t), "rollout", "status", fmt.Sprintf("sts/%s-consul-server", releaseName))
 	}
 
-	primaryClient := primaryConsulCluster.SetupConsulClient(t, false)
-	secondaryClient := secondaryConsulCluster.SetupConsulClient(t, false)
+	primaryClient, _ := primaryConsulCluster.SetupConsulClient(t, false)
+	secondaryClient, _ := secondaryConsulCluster.SetupConsulClient(t, false)
 
 	// Verify federation between servers
 	logger.Log(t, "verifying federation was successful")
@@ -128,7 +128,7 @@ func TestMeshGatewayDefault(t *testing.T) {
 	k8s.DeployKustomize(t, primaryContext.KubectlOptions(t), cfg.NoCleanupOnFailure, cfg.DebugDirectory, "../fixtures/cases/static-client-multi-dc")
 
 	logger.Log(t, "checking that connection is successful")
-	k8s.CheckStaticServerConnectionSuccessful(t, primaryContext.KubectlOptions(t), staticClientName, "http://localhost:1234")
+	k8s.CheckStaticServerConnectionSuccessful(t, primaryContext.KubectlOptions(t), StaticClientName, "http://localhost:1234")
 }
 
 // Test that Connect and wan federation over mesh gateways work in a secure installation,
@@ -258,8 +258,8 @@ func TestMeshGatewaySecure(t *testing.T) {
 				k8s.RunKubectl(t, primaryContext.KubectlOptions(t), "rollout", "status", fmt.Sprintf("sts/%s-consul-server", releaseName))
 			}
 
-			primaryClient := primaryConsulCluster.SetupConsulClient(t, true)
-			secondaryClient := secondaryConsulCluster.SetupConsulClient(t, true)
+			primaryClient, _ := primaryConsulCluster.SetupConsulClient(t, true)
+			secondaryClient, _ := secondaryConsulCluster.SetupConsulClient(t, true)
 
 			// Verify federation between servers
 			logger.Log(t, "verifying federation was successful")
@@ -287,7 +287,7 @@ func TestMeshGatewaySecure(t *testing.T) {
 				Name: "static-server",
 				Sources: []*api.SourceIntention{
 					{
-						Name:   staticClientName,
+						Name:   StaticClientName,
 						Action: api.IntentionActionAllow,
 					},
 				},
@@ -295,7 +295,7 @@ func TestMeshGatewaySecure(t *testing.T) {
 			require.NoError(t, err)
 
 			logger.Log(t, "checking that connection is successful")
-			k8s.CheckStaticServerConnectionSuccessful(t, primaryContext.KubectlOptions(t), staticClientName, "http://localhost:1234")
+			k8s.CheckStaticServerConnectionSuccessful(t, primaryContext.KubectlOptions(t), StaticClientName, "http://localhost:1234")
 		})
 	}
 }

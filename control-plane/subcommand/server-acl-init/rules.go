@@ -8,6 +8,7 @@ import (
 
 type rulesData struct {
 	EnablePartitions        bool
+	EnablePeering           bool
 	PartitionName           string
 	EnableNamespaces        bool
 	SyncConsulDestNS        string
@@ -268,21 +269,33 @@ func (c *Command) syncRules() (string, error) {
     policy = "write"
   }
 {{- if .EnableNamespaces }}
-operator = "write"
-acl = "write"
-{{- if .SyncEnableNSMirroring }}
-namespace_prefix "{{ .SyncNSMirroringPrefix }}" {
+{{- if .EnablePartitions }}
+partition "{{ .PartitionName }}" {
+  mesh = "write"
+  acl = "write"
 {{- else }}
-namespace "{{ .SyncConsulDestNS }}" {
+  operator = "write"
+  acl = "write"
 {{- end }}
+{{- if .SyncEnableNSMirroring }}
+  namespace_prefix "{{ .SyncNSMirroringPrefix }}" {
+{{- else }}
+  namespace "{{ .SyncConsulDestNS }}" {
 {{- end }}
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
+{{- if .EnablePartitions }}
     policy = "write"
-  }
+{{- end }}
+{{- end }}
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
 {{- if .EnableNamespaces }}
+  }
+{{- end }}
+{{- if .EnablePartitions }}
 }
 {{- end }}
 `
@@ -303,6 +316,9 @@ partition "{{ .PartitionName }}" {
 {{- if .EnableNamespaces }}
   operator = "write"
 {{- end }}
+{{- end }}
+{{- if .EnablePeering }}
+  peering = "write"
 {{- end }}
   node_prefix "" {
     policy = "write"
@@ -404,6 +420,7 @@ partition "{{ .PartitionName }}" {
 func (c *Command) rulesData() rulesData {
 	return rulesData{
 		EnablePartitions:        c.flagEnablePartitions,
+		EnablePeering:           c.flagEnablePeering,
 		PartitionName:           c.flagPartitionName,
 		EnableNamespaces:        c.flagEnableNamespaces,
 		SyncConsulDestNS:        c.flagConsulSyncDestinationNamespace,

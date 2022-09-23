@@ -3,9 +3,10 @@ package aclinit
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -113,8 +114,9 @@ func (c *Command) Run(args []string) int {
 	if err = c.flags.Parse(args); err != nil {
 		return 1
 	}
-	if len(c.flags.Args()) > 0 {
-		c.UI.Error("Should have no non-flag arguments.")
+	// Validate flags
+	if err := c.validateFlags(); err != nil {
+		c.UI.Error(err.Error())
 		return 1
 	}
 
@@ -181,7 +183,7 @@ func (c *Command) Run(args []string) int {
 			cfg.Scheme = scheme
 		}
 
-		c.consulClient, err = consul.NewClient(cfg)
+		c.consulClient, err = consul.NewClient(cfg, c.http.ConsulAPITimeout())
 		if err != nil {
 			c.logger.Error("Unable to get client connection", "error", err)
 			return 1
@@ -235,7 +237,7 @@ func (c *Command) Run(args []string) int {
 		// Write the data out as a file.
 		// Must be 0644 because this is written by the consul-k8s user but needs
 		// to be readable by the consul user.
-		err = ioutil.WriteFile(filepath.Join(c.flagACLDir, "acl-config.json"), buf.Bytes(), 0644)
+		err = os.WriteFile(filepath.Join(c.flagACLDir, "acl-config.json"), buf.Bytes(), 0644)
 		if err != nil {
 			c.logger.Error("Error writing config file", "error", err)
 			return 1
@@ -245,7 +247,7 @@ func (c *Command) Run(args []string) int {
 	if c.flagTokenSinkFile != "" {
 		// Must be 0600 in case this command is re-run. In that case we need
 		// to have permissions to overwrite our file.
-		err := ioutil.WriteFile(c.flagTokenSinkFile, []byte(secret), 0600)
+		err := os.WriteFile(c.flagTokenSinkFile, []byte(secret), 0600)
 		if err != nil {
 			c.logger.Error("Error writing token to file", "file", c.flagTokenSinkFile, "error", err)
 			return 1
@@ -263,6 +265,17 @@ func (c *Command) getSecret(secretName string) (string, error) {
 
 	// Extract token
 	return string(secret.Data["token"]), nil
+}
+
+func (c *Command) validateFlags() error {
+	if len(c.flags.Args()) > 0 {
+		return errors.New("Should have no non-flag arguments.")
+	}
+	if c.http.ConsulAPITimeout() <= 0 {
+		return errors.New("-consul-api-timeout must be set to a value greater than 0")
+	}
+
+	return nil
 }
 
 func (c *Command) Synopsis() string { return synopsis }

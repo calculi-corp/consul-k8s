@@ -1,3 +1,4 @@
+{{- if and .Values.global.peering.enabled (not .Values.connectInject.enabled) }}{{ fail "setting global.peering.enabled to true requires connectInject.enabled to be true" }}{{ end }}
 {{- if (or (and (ne (.Values.connectInject.enabled | toString) "-") .Values.connectInject.enabled) (and (eq (.Values.connectInject.enabled | toString) "-") .Values.global.enabled)) }}
 {{- if not (or (and (ne (.Values.client.enabled | toString) "-") .Values.client.enabled) (and (eq (.Values.client.enabled | toString) "-") .Values.global.enabled)) }}{{ fail "clients must be enabled for connect injection" }}{{ end }}
 {{- if not .Values.client.grpc }}{{ fail "client.grpc must be true for connect injection" }}{{ end }}
@@ -8,7 +9,11 @@
 {{- if .Values.connectInject.centralConfig }}{{ if .Values.connectInject.centralConfig.proxyDefaults }}{{- if ne (trim .Values.connectInject.centralConfig.proxyDefaults) `{}` }}{{ fail "connectInject.centralConfig.proxyDefaults is no longer supported; instead you must migrate to CRDs (see www.consul.io/docs/k8s/crds/upgrade-to-crds)" }}{{ end }}{{ end }}{{ end -}}
 {{- if .Values.connectInject.imageEnvoy }}{{ fail "connectInject.imageEnvoy must be specified in global.imageEnvoy" }}{{ end }}
 {{- if .Values.global.lifecycleSidecarContainer }}{{ fail "global.lifecycleSidecarContainer has been renamed to global.consulSidecarContainer. Please set values using global.consulSidecarContainer." }}{{ end }}
+{{ template "consul.validateVaultWebhookCertConfiguration" . }}
 {{- template "consul.reservedNamesFailer" (list .Values.connectInject.consulNamespaces.consulDestinationNamespace "connectInject.consulNamespaces.consulDestinationNamespace") }}
+{{- $serverEnabled := (or (and (ne (.Values.server.enabled | toString) "-") .Values.server.enabled) (and (eq (.Values.server.enabled | toString) "-") .Values.global.enabled)) -}}
+{{- $serverExposeServiceEnabled := (or (and (ne (.Values.server.exposeService.enabled | toString) "-") .Values.server.exposeService.enabled) (and (eq (.Values.server.exposeService.enabled | toString) "-") (or .Values.global.peering.enabled .Values.global.adminPartitions.enabled))) -}}
+{{- if not (or (eq .Values.global.peering.tokenGeneration.serverAddresses.source "") (or (eq .Values.global.peering.tokenGeneration.serverAddresses.source "static") (eq .Values.global.peering.tokenGeneration.serverAddresses.source "consul"))) }}{{ fail "global.peering.tokenGeneration.serverAddresses.source must be one of empty string, 'consul' or 'static'" }}{{ end }}
 # The deployment for running the Connect sidecar injector
 apiVersion: apps/v1
 kind: Deployment
@@ -38,12 +43,34 @@ spec:
         component: connect-injector
       annotations:
         "consul.hashicorp.com/connect-inject": "false"
+        {{- if .Values.connectInject.annotations }}
+        {{- tpl .Values.connectInject.annotations . | nindent 8 }}
+        {{- end }}
         {{- if (and .Values.global.secretsBackend.vault.enabled .Values.global.tls.enabled) }}
         "vault.hashicorp.com/agent-init-first": "true"
         "vault.hashicorp.com/agent-inject": "true"
+        {{- if .Values.global.secretsBackend.vault.connectInjectRole }}
+        "vault.hashicorp.com/role": {{ .Values.global.secretsBackend.vault.connectInjectRole }}
+        {{ else }}
         "vault.hashicorp.com/role": {{ .Values.global.secretsBackend.vault.consulCARole }}
+        {{ end }}
         "vault.hashicorp.com/agent-inject-secret-serverca.crt": {{ .Values.global.tls.caCert.secretName }}
         "vault.hashicorp.com/agent-inject-template-serverca.crt": {{ template "consul.serverTLSCATemplate" . }}
+        {{- if .Values.global.secretsBackend.vault.connectInject.caCert.secretName }}
+        {{- with .Values.global.secretsBackend.vault.connectInject.caCert }}
+        "vault.hashicorp.com/agent-inject-secret-ca.crt": {{ .secretName }}
+        "vault.hashicorp.com/agent-inject-template-ca.crt": {{ template "consul.vaultCATemplate" . }}
+        "vault.hashicorp.com/secret-volume-path-ca.crt": "/vault/secrets/connect-injector/certs"
+        {{- end }}
+        {{- end }}
+        {{- if .Values.global.secretsBackend.vault.connectInject.tlsCert.secretName }}
+        "vault.hashicorp.com/agent-inject-secret-tls.crt": {{ .Values.global.secretsBackend.vault.connectInject.tlsCert.secretName }}
+        "vault.hashicorp.com/agent-inject-template-tls.crt": {{ include "consul.connectInjectWebhookTLSCertTemplate" . }}
+        "vault.hashicorp.com/secret-volume-path-tls.crt": "/vault/secrets/connect-injector/certs"
+        "vault.hashicorp.com/agent-inject-secret-tls.key": {{ .Values.global.secretsBackend.vault.connectInject.tlsCert.secretName }}
+        "vault.hashicorp.com/agent-inject-template-tls.key": {{ include "consul.connectInjectWebhookTLSKeyTemplate" . }}
+        "vault.hashicorp.com/secret-volume-path-tls.key": "/vault/secrets/connect-injector/certs"
+        {{- end }}
         {{- if and .Values.global.secretsBackend.vault.ca.secretName .Values.global.secretsBackend.vault.ca.secretKey }}
         "vault.hashicorp.com/agent-extra-secret": "{{ .Values.global.secretsBackend.vault.ca.secretName }}"
         "vault.hashicorp.com/ca-cert": "/vault/custom/{{ .Values.global.secretsBackend.vault.ca.secretKey }}"
@@ -96,6 +123,7 @@ spec:
             - "-ec"
             - |
               consul-k8s-control-plane inject-connect \
+                -consul-api-timeout={{ .Values.global.consulAPITimeout }} \
                 -log-level={{ default .Values.global.logLevel .Values.connectInject.logLevel }} \
                 -log-json={{ .Values.global.logJSON }} \
                 -default-inject={{ .Values.connectInject.default }} \
@@ -104,11 +132,33 @@ spec:
                 -consul-k8s-image="{{ default .Values.global.imageK8S .Values.connectInject.image }}" \
                 -release-name="{{ .Release.Name }}" \
                 -release-namespace="{{ .Release.Namespace }}" \
+                -resource-prefix={{ template "consul.fullname" . }} \
                 -listen=:8080 \
                 {{- if .Values.connectInject.transparentProxy.defaultEnabled }}
                 -default-enable-transparent-proxy=true \
                 {{- else }}
                 -default-enable-transparent-proxy=false \
+                {{- end }}
+                -enable-cni={{ .Values.connectInject.cni.enabled }} \
+                {{- if .Values.global.peering.enabled }}
+                -enable-peering=true \
+                {{- if (eq .Values.global.peering.tokenGeneration.serverAddresses.source "") }}
+                {{- if (and $serverEnabled $serverExposeServiceEnabled) }}
+                -read-server-expose-service=true \
+                {{- else }}
+                {{- if .Values.externalServers.enabled }}
+                {{- $port := .Values.externalServers.grpcPort }}
+                {{- range $h := .Values.externalServers.hosts }}
+                -token-server-address="{{ $h }}:{{ $port }}" \
+                {{- end }}
+                {{- end }}
+                {{- end }}
+                {{- end }}
+                {{- if (eq .Values.global.peering.tokenGeneration.serverAddresses.source "static") }}
+                {{- range $addr := .Values.global.peering.tokenGeneration.serverAddresses.static }}
+                -token-server-address="{{ $addr }}" \
+                {{- end }}
+                {{- end }}
                 {{- end }}
                 {{- if .Values.global.openshift.enabled }}
                 -enable-openshift \
@@ -118,7 +168,6 @@ spec:
                 {{- else }}
                 -transparent-proxy-default-overwrite-probes=false \
                 {{- end }}
-                -resource-prefix={{ template "consul.fullname" . }} \
                 {{- if (and .Values.dns.enabled .Values.dns.enableRedirection) }}
                 -enable-consul-dns=true \
                 {{- end }}
@@ -167,7 +216,12 @@ spec:
                 -consul-cross-namespace-acl-policy=cross-namespace-policy \
                 {{- end }}
                 {{- end }}
+                {{- if and .Values.global.secretsBackend.vault.enabled .Values.global.secretsBackend.vault.connectInject.tlsCert.secretName }}
+                -tls-cert-dir=/vault/secrets/connect-injector/certs \
+                -enable-webhook-ca-update \
+                {{- else }}
                 -tls-cert-dir=/etc/connect-injector/certs \
+                {{- end }}
                 {{- $resources := .Values.connectInject.sidecarProxy.resources }}
                 {{- /* kindIs is used here to differentiate between null and 0 */}}
                 {{- if not (kindIs "invalid" $resources.limits.memory) }}
@@ -182,6 +236,7 @@ spec:
                 {{- if not (kindIs "invalid" $resources.requests.cpu) }}
                 -default-sidecar-proxy-cpu-request={{ $resources.requests.cpu }} \
                 {{- end }}
+                -default-envoy-proxy-concurrency={{ .Values.connectInject.sidecarProxy.concurrency }} \
 
                 {{- if .Values.connectInject.initContainer }}
                 {{- $initResources := .Values.connectInject.initContainer.resources }}
@@ -222,7 +277,7 @@ spec:
                 - "/bin/sh"
                 - "-ec"
                 - |
-                  consul-k8s-control-plane consul-logout
+                  consul-k8s-control-plane consul-logout -consul-api-timeout={{ .Values.global.consulAPITimeout }}
           {{- end }}
           startupProbe:
             httpGet:
@@ -251,9 +306,11 @@ spec:
             successThreshold: 1
             timeoutSeconds: 5
           volumeMounts:
+          {{- if not (and .Values.global.secretsBackend.vault.enabled .Values.global.secretsBackend.vault.connectInject.tlsCert.secretName) }}
           - name: certs
             mountPath: /etc/connect-injector/certs
             readOnly: true
+          {{- end }}
           - mountPath: /consul/login
             name: consul-data
             readOnly: true
@@ -271,10 +328,12 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
       volumes:
+      {{- if not (and .Values.global.secretsBackend.vault.enabled .Values.global.secretsBackend.vault.connectInject.tlsCert.secretName) }}
       - name: certs
         secret:
           defaultMode: 420
           secretName: {{ template "consul.fullname" . }}-connect-inject-webhook-cert
+      {{- end }}
       - name: consul-data
         emptyDir:
           medium: "Memory"
@@ -348,6 +407,7 @@ spec:
               {{- if .Values.global.adminPartitions.enabled }}
               -partition={{ .Values.global.adminPartitions.name }} \
               {{- end }}
+              -consul-api-timeout={{ .Values.global.consulAPITimeout }} \
               -log-level={{ default .Values.global.logLevel .Values.connectInject.logLevel }} \
               -log-json={{ .Values.global.logJSON }}
         resources:

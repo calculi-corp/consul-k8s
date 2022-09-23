@@ -6,7 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -137,7 +137,7 @@ func (c *Command) Run(args []string) int {
 	// Add gossip encryption key if it exists.
 	if c.flagGossipKeyFile != "" {
 		logger.Info("Retrieving gossip encryption key data")
-		gossipKey, err := ioutil.ReadFile(c.flagGossipKeyFile)
+		gossipKey, err := os.ReadFile(c.flagGossipKeyFile)
 		if err != nil {
 			c.UI.Error(fmt.Sprintf("Error reading gossip encryption key file: %s", err))
 			return 1
@@ -152,7 +152,7 @@ func (c *Command) Run(args []string) int {
 
 	// Add server CA cert.
 	logger.Info("Retrieving server CA cert data")
-	caCert, err := ioutil.ReadFile(c.flagServerCACertFile)
+	caCert, err := os.ReadFile(c.flagServerCACertFile)
 	if err != nil {
 		c.UI.Error(fmt.Sprintf("Error reading server CA cert file: %s", err))
 		return 1
@@ -162,7 +162,7 @@ func (c *Command) Run(args []string) int {
 
 	// Add server CA key.
 	logger.Info("Retrieving server CA key data")
-	caKey, err := ioutil.ReadFile(c.flagServerCAKeyFile)
+	caKey, err := os.ReadFile(c.flagServerCAKeyFile)
 	if err != nil {
 		c.UI.Error(fmt.Sprintf("Error reading server CA key file: %s", err))
 		return 1
@@ -199,20 +199,19 @@ func (c *Command) Run(args []string) int {
 	// Set up Consul client because we need to make calls to Consul to retrieve
 	// the datacenter name and mesh gateway addresses.
 	if c.consulClient == nil {
-		consulCfg := &api.Config{
-			// Use the replication token for our ACL token. If ACLs are disabled,
-			// this will be empty which won't matter because ACLs are disabled.
-			Token: string(replicationToken),
-		}
+		cfg := api.DefaultConfig()
+		// Use the replication token for our ACL token. If ACLs are disabled,
+		// this will be empty which won't matter because ACLs are disabled.
+		cfg.Token = string(replicationToken)
 		// Merge our base config containing the optional ACL token with client
 		// config automatically parsed from the passed flags and environment
 		// variables. For example, when running in k8s the CONSUL_HTTP_ADDR environment
 		// variable will be set to the IP of the Consul client pod on the same
 		// node.
-		c.http.MergeOntoConfig(consulCfg)
+		c.http.MergeOntoConfig(cfg)
 
 		var err error
-		c.consulClient, err = consul.NewClient(consulCfg)
+		c.consulClient, err = consul.NewClient(cfg, c.http.ConsulAPITimeout())
 		if err != nil {
 			logger.Error("Error creating consul client", "err", err)
 			return 1
@@ -283,6 +282,9 @@ func (c *Command) validateFlags(args []string) error {
 	}
 	if err := c.validateCAFileFlag(); err != nil {
 		return err
+	}
+	if c.http.ConsulAPITimeout() <= 0 {
+		return errors.New("-consul-api-timeout must be set to a value greater than 0")
 	}
 	return nil
 }
@@ -430,7 +432,7 @@ func (c *Command) validateCAFileFlag() error {
 	if cfg.TLSConfig.CAFile == "" {
 		return errors.New("-ca-file or CONSUL_CACERT must be set")
 	}
-	_, err := ioutil.ReadFile(cfg.TLSConfig.CAFile)
+	_, err := os.ReadFile(cfg.TLSConfig.CAFile)
 	if err != nil {
 		return fmt.Errorf("error reading CA file: %s", err)
 	}

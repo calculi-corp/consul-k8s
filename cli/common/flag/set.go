@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"strings"
 
 	"github.com/posener/complete"
@@ -34,7 +33,7 @@ func NewSets() *Sets {
 	// Errors and usage are expected to be controlled externally by
 	// checking on the result of Parse.
 	unionSet.Usage = func() {}
-	unionSet.SetOutput(ioutil.Discard)
+	unionSet.SetOutput(io.Discard)
 
 	return &Sets{
 		unionSet:    unionSet,
@@ -54,6 +53,22 @@ func (f *Sets) NewSet(name string) *Set {
 	// Keep track of it for help generation
 	f.flagSets = append(f.flagSets, flagSet)
 	return flagSet
+}
+
+// GetSetFlags returns a slice of flags for a given set.
+// If the requested set does not exist, this will return an empty slice.
+func (f *Sets) GetSetFlags(setName string) []string {
+	var setFlags []string
+	for _, set := range f.flagSets {
+		if set.name == setName {
+			set.flagSet.VisitAll(func(f *flag.Flag) {
+				setFlags = append(setFlags, fmt.Sprintf("-%s", f.Name))
+			})
+			return setFlags
+		}
+	}
+
+	return setFlags
 }
 
 // Completions returns the completions for this flag set.

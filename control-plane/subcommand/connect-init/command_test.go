@@ -2,7 +2,6 @@ package connectinit
 
 import (
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
@@ -35,11 +34,28 @@ func TestRun_FlagValidation(t *testing.T) {
 			expErr: "-pod-namespace must be set",
 		},
 		{
-			flags:  []string{"-pod-name", testPodName, "-pod-namespace", testPodNamespace, "-acl-auth-method", test.AuthMethod},
+			flags: []string{
+				"-pod-name", testPodName,
+				"-pod-namespace", testPodNamespace,
+				"-acl-auth-method", test.AuthMethod},
 			expErr: "-service-account-name must be set when ACLs are enabled",
 		},
 		{
-			flags:  []string{"-pod-name", testPodName, "-pod-namespace", testPodNamespace, "-acl-auth-method", test.AuthMethod, "-service-account-name", "foo", "-log-level", "invalid"},
+			flags: []string{
+				"-pod-name", testPodName,
+				"-pod-namespace", testPodNamespace,
+				"-acl-auth-method", test.AuthMethod,
+				"-service-account-name", "foo"},
+			expErr: "-consul-api-timeout must be set to a value greater than 0",
+		},
+		{
+			flags: []string{
+				"-pod-name", testPodName,
+				"-pod-namespace", testPodNamespace,
+				"-acl-auth-method", test.AuthMethod,
+				"-service-account-name", "foo",
+				"-consul-api-timeout", "5s",
+				"-log-level", "invalid"},
 			expErr: "unknown log level: invalid",
 		},
 	}
@@ -186,6 +202,7 @@ func TestRun_ServicePollingWithACLsAndTLS(t *testing.T) {
 				"-acl-token-sink", tokenFile,
 				"-proxy-id-file", proxyFile,
 				"-multiport=" + strconv.FormatBool(tt.multiport),
+				"-consul-api-timeout=5s",
 			}
 			// Add the CA File if necessary since we're not setting CONSUL_CACERT in tt ENV.
 			if tt.tls {
@@ -200,7 +217,7 @@ func TestRun_ServicePollingWithACLsAndTLS(t *testing.T) {
 			require.Equal(t, 0, code, ui.ErrorWriter.String())
 
 			// Validate the ACL token was written.
-			tokenData, err := ioutil.ReadFile(tokenFile)
+			tokenData, err := os.ReadFile(tokenFile)
 			require.NoError(t, err)
 			require.NotEmpty(t, tokenData)
 
@@ -212,7 +229,7 @@ func TestRun_ServicePollingWithACLsAndTLS(t *testing.T) {
 			require.Equal(t, "token created via login: {\"pod\":\"default-ns/counting-pod\"}", token.Description)
 
 			// Validate contents of proxyFile.
-			data, err := ioutil.ReadFile(proxyFile)
+			data, err := os.ReadFile(proxyFile)
 			require.NoError(t, err)
 			if tt.multiport {
 				require.Contains(t, string(data), "counting-admin-sidecar-proxy-id")
@@ -304,7 +321,8 @@ func TestRun_ServicePollingOnly(t *testing.T) {
 				"-pod-namespace", testPodNamespace,
 				"-proxy-id-file", proxyFile,
 				"-multiport=" + strconv.FormatBool(tt.multiport),
-				"-http-addr", fmt.Sprintf("%s://%s", cfg.Scheme, cfg.Address)}
+				"-http-addr", fmt.Sprintf("%s://%s", cfg.Scheme, cfg.Address),
+				"-consul-api-timeout", "5s"}
 
 			// In a multiport case, the service name will be passed in to the test.
 			if tt.serviceName != "" {
@@ -321,7 +339,7 @@ func TestRun_ServicePollingOnly(t *testing.T) {
 			require.Equal(t, 0, code, ui.ErrorWriter.String())
 
 			// Validate contents of proxyFile.
-			data, err := ioutil.ReadFile(proxyFile)
+			data, err := os.ReadFile(proxyFile)
 			require.NoError(t, err)
 			if tt.multiport {
 				require.Contains(t, string(data), "counting-admin-sidecar-proxy-id")
@@ -506,6 +524,7 @@ func TestRun_ServicePollingErrors(t *testing.T) {
 				"-pod-name", testPodName,
 				"-pod-namespace", testPodNamespace,
 				"-proxy-id-file", proxyFile,
+				"-consul-api-timeout", "5s",
 			}
 
 			code := cmd.Run(flags)
@@ -550,12 +569,13 @@ func TestRun_RetryServicePolling(t *testing.T) {
 		"-pod-namespace", testPodNamespace,
 		"-http-addr", server.HTTPAddr,
 		"-proxy-id-file", proxyFile,
+		"-consul-api-timeout", "5s",
 	}
 	code := cmd.Run(flags)
 	require.Equal(t, 0, code)
 
 	// Validate contents of proxyFile.
-	data, err := ioutil.ReadFile(proxyFile)
+	data, err := os.ReadFile(proxyFile)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "counting-counting-sidecar-proxy")
 }
@@ -590,6 +610,7 @@ func TestRun_InvalidProxyFile(t *testing.T) {
 		"-pod-namespace", testPodNamespace,
 		"-http-addr", server.HTTPAddr,
 		"-proxy-id-file", randFileName,
+		"-consul-api-timeout", "5s",
 	}
 	code := cmd.Run(flags)
 	require.Equal(t, 1, code)
@@ -660,7 +681,9 @@ func TestRun_FailsWithBadServerResponses(t *testing.T) {
 				"-service-account-name", testServiceAccountName,
 				"-bearer-token-file", bearerFile,
 				"-acl-token-sink", tokenFile,
-				"-http-addr", serverURL.String()}
+				"-http-addr", serverURL.String(),
+				"-consul-api-timeout", "5s",
+			}
 			code := cmd.Run(flags)
 			require.Equal(t, 1, code)
 			// We use the counter to ensure we failed at ACL Login (when counter = 0) or proceeded to the service get portion of the command.
@@ -734,17 +757,19 @@ func TestRun_LoginWithRetries(t *testing.T) {
 				"-acl-token-sink", tokenFile,
 				"-bearer-token-file", bearerFile,
 				"-proxy-id-file", proxyFile,
-				"-http-addr", serverURL.String()})
+				"-http-addr", serverURL.String(),
+				"-consul-api-timeout", "5s",
+			})
 			fmt.Println(ui.ErrorWriter.String())
 			require.Equal(t, c.ExpCode, code)
 			// Cmd will return 1 after numACLLoginRetries, so bound LoginAttemptsCount if we exceeded it.
 			require.Equal(t, c.LoginAttemptsCount, counter)
 			// Validate that the token was written to disk if we succeeded.
-			tokenData, err := ioutil.ReadFile(tokenFile)
+			tokenData, err := os.ReadFile(tokenFile)
 			require.NoError(t, err)
 			require.Equal(t, "b78d37c7-0ca7-5f4d-99ee-6d9975ce4586", string(tokenData))
 			// Validate contents of proxyFile.
-			proxydata, err := ioutil.ReadFile(proxyFile)
+			proxydata, err := os.ReadFile(proxyFile)
 			require.NoError(t, err)
 			require.Equal(t, "counting-counting-sidecar-proxy", string(proxydata))
 		})
@@ -813,7 +838,9 @@ func TestRun_EnsureTokenExists(t *testing.T) {
 				"-acl-token-sink", tokenFile,
 				"-bearer-token-file", bearerFile,
 				"-proxy-id-file", proxyFile,
-				"-http-addr", serverURL.String()})
+				"-http-addr", serverURL.String(),
+				"-consul-api-timeout", "5s",
+			})
 			if c.neverSucceed {
 				require.Equal(t, 1, code)
 			} else {

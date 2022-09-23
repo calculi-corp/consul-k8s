@@ -55,7 +55,7 @@ load _helpers
       --set 'apiGateway.enabled=true' \
       --set 'apiGateway.image=bar' \
       --set 'global.enableConsulNamespaces=true' \
-      --set 'apiGateway.consulNamespaces.mirroringK8S=true' \
+      --set 'connectInject.consulNamespaces.mirroringK8S=true' \
       . | tee /dev/stderr |
       yq '.spec.template.spec.containers[0].command | join(" ") | contains("-mirroring-k8s=true")' | tee /dev/stderr)
   [ "${actual}" = "true" ]
@@ -68,8 +68,8 @@ load _helpers
       --set 'apiGateway.enabled=true' \
       --set 'apiGateway.image=bar' \
       --set 'global.enableConsulNamespaces=true' \
-      --set 'apiGateway.consulNamespaces.mirroringK8S=true' \
-      --set 'apiGateway.consulNamespaces.mirroringK8SPrefix=foo' \
+      --set 'connectInject.consulNamespaces.mirroringK8S=true' \
+      --set 'connectInject.consulNamespaces.mirroringK8SPrefix=foo' \
       . | tee /dev/stderr |
       yq '.spec.template.spec.containers[0].command | join(" ") | contains("-mirroring-k8s-prefix=foo")' | tee /dev/stderr)
   [ "${actual}" = "true" ]
@@ -93,7 +93,7 @@ load _helpers
       --set 'apiGateway.enabled=true' \
       --set 'apiGateway.image=bar' \
       . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | join(" ") | contains("-sds-server-host RELEASE-NAME-consul-api-gateway-controller.default.svc")' | tee /dev/stderr)
+      yq '.spec.template.spec.containers[0].command | join(" ") | contains("-sds-server-host release-name-consul-api-gateway-controller.default.svc")' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -321,6 +321,7 @@ load _helpers
       --set 'apiGateway.image=foo' \
       --set 'global.tls.enabled=true' \
       --set 'global.acls.manageSystemACLs=true' \
+      --set 'global.consulAPITimeout=5s' \
       . | tee /dev/stderr |
       yq '.spec.template.spec.initContainers[] | select(.name == "api-gateway-controller-acl-init")' | tee /dev/stderr)
 
@@ -344,6 +345,11 @@ load _helpers
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
 }
 
 @test "apiGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command with Partitions enabled" {
@@ -365,7 +371,7 @@ load _helpers
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
-      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method"))' | tee /dev/stderr)
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
@@ -387,6 +393,40 @@ load _helpers
 
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "apiGateway/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command when federation enabled in non-primary datacenter" {
+  cd `chart_dir`
+  local object=$(helm template \
+      -s templates/api-gateway-controller-deployment.yaml \
+      --set 'apiGateway.enabled=true' \
+      --set 'apiGateway.image=foo' \
+      --set 'meshGateway.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.acls.manageSystemACLs=true' \
+      --set 'global.datacenter=dc2' \
+      --set 'global.federation.enabled=true' \
+      --set 'global.federation.primaryDatacenter=dc1' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "api-gateway-controller-acl-init")' | tee /dev/stderr)
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("consul-k8s-control-plane acl-init"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-primary-datacenter=dc1"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -421,6 +461,10 @@ load _helpers
 
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-auto-encrypt-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -650,6 +694,38 @@ load _helpers
   [ "${actual}" = "3" ]
 }
 
+
+#--------------------------------------------------------------------
+# get-auto-encrypt-client-ca
+
+@test "apiGateway/Deployment: get-auto-encrypt-client-ca uses server's stateful set address by default and passes ca cert" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/api-gateway-controller-deployment.yaml  \
+      --set 'apiGateway.enabled=true' \
+      --set 'apiGateway.image=foo' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "get-auto-encrypt-client-ca").command | join(" ")' | tee /dev/stderr)
+
+  # check server address
+  actual=$(echo $command | jq ' . | contains("-server-addr=release-name-consul-server")')
+  [ "${actual}" = "true" ]
+
+  # check server port
+  actual=$(echo $command | jq ' . | contains("-server-port=8501")')
+  [ "${actual}" = "true" ]
+
+  # check server's CA cert
+  actual=$(echo $command | jq ' . | contains("-ca-file=/consul/tls/ca/tls.crt")')
+  [ "${actual}" = "true" ]
+
+  # check consul-api-timeout
+  actual=$(echo $command | jq ' . | contains("-consul-api-timeout=5s")')
+  [ "${actual}" = "true" ]
+}
+
 #--------------------------------------------------------------------
 # Vault
 
@@ -782,4 +858,23 @@ load _helpers
   local actual="$(echo $cmd |
       yq -r '.annotations["vault.hashicorp.com/role"]' | tee /dev/stderr)"
   [ "${actual}" = "test" ]
+}
+
+@test "apiGateway/Deployment: vault agent annotations can be set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/api-gateway-controller-deployment.yaml  \
+      --set 'apiGateway.enabled=true' \
+      --set 'apiGateway.image=foo' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations.foo' | tee /dev/stderr)
+  [ "${actual}" = "bar" ]
 }

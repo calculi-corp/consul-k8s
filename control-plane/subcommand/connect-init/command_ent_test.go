@@ -4,7 +4,6 @@ package connectinit
 
 import (
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"os"
 	"testing"
@@ -196,6 +195,7 @@ func TestRun_ServicePollingWithACLsAndTLSWithNamespaces(t *testing.T) {
 				"-acl-token-sink", tokenFile,
 				"-bearer-token-file", bearerFile,
 				"-proxy-id-file", proxyFile,
+				"-consul-api-timeout", "5s",
 			}
 			if c.acls {
 				flags = append(flags, "-acl-auth-method", test.AuthMethod, "-auth-method-namespace", c.authMethodNamespace)
@@ -210,7 +210,7 @@ func TestRun_ServicePollingWithACLsAndTLSWithNamespaces(t *testing.T) {
 
 			if c.acls {
 				// Validate the ACL token was written.
-				tokenData, err := ioutil.ReadFile(tokenFile)
+				tokenData, err := os.ReadFile(tokenFile)
 				require.NoError(t, err)
 				require.NotEmpty(t, tokenData)
 
@@ -223,7 +223,7 @@ func TestRun_ServicePollingWithACLsAndTLSWithNamespaces(t *testing.T) {
 			}
 
 			// Validate contents of proxyFile.
-			data, err := ioutil.ReadFile(proxyFile)
+			data, err := os.ReadFile(proxyFile)
 			require.NoError(t, err)
 			require.Contains(t, string(data), "counting-counting-sidecar-proxy")
 		})

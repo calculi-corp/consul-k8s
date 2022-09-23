@@ -79,6 +79,22 @@ load _helpers
   [[ "$output" =~ "client.grpc must be true for connect injection" ]]
 }
 
+@test "connectInject/Deployment: command defaults" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("consul-k8s-control-plane inject-connect"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
 
 #--------------------------------------------------------------------
 # connectInject.centralConfig [DEPRECATED]
@@ -492,7 +508,7 @@ EOF
       --set 'connectInject.enabled=true' \
       --set 'global.acls.manageSystemACLs=true' \
       . | tee /dev/stderr |
-      yq '.spec.template.spec.containers[0].command | any(contains("-acl-auth-method=\"RELEASE-NAME-consul-k8s-auth-method\""))' | tee /dev/stderr)
+      yq '.spec.template.spec.containers[0].command | any(contains("-acl-auth-method=\"release-name-consul-k8s-auth-method\""))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -549,7 +565,7 @@ EOF
       -s templates/connect-inject-deployment.yaml \
       --set 'connectInject.enabled=true' \
       . | tee /dev/stderr |
-      yq -c -r '.spec.template.spec.containers[0].command | join(" ") | contains("-resource-prefix=RELEASE-NAME-consul")' | tee /dev/stderr)
+      yq -c -r '.spec.template.spec.containers[0].command | join(" ") | contains("-resource-prefix=release-name-consul")' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -599,6 +615,17 @@ EOF
   # check that the volume uses the provided secret key
   actual=$(echo $ca_cert_volume | jq -r '.secret.items[0].key' | tee /dev/stderr)
   [ "${actual}" = "key" ]
+}
+
+@test "connectInject/Deployment: Adds -tls-cert-dir=/etc/connect-injector/certs to command" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-tls-cert-dir=/etc/connect-injector/certs"))' | tee /dev/stderr)
+  [ "${actual}" != "" ]
 }
 
 #--------------------------------------------------------------------
@@ -933,7 +960,7 @@ EOF
       --set 'connectInject.enabled=true' \
       --set 'global.acls.manageSystemACLs=true' \
       . | tee /dev/stderr |
-      yq '[.spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]] | any(contains("consul-k8s-control-plane consul-logout"))' | tee /dev/stderr)
+      yq '[.spec.template.spec.containers[0].lifecycle.preStop.exec.command[2]] | any(contains("consul-k8s-control-plane consul-logout -consul-api-timeout=5s"))' | tee /dev/stderr)
 
   [ "${object}" = "true" ]
 }
@@ -984,6 +1011,10 @@ EOF
       yq '[.env[1].value] | any(contains("http://$(HOST_IP):8500"))' | tee /dev/stderr)
       echo $actual
   [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
 }
 
 @test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command and environment with tls enabled" {
@@ -1016,6 +1047,10 @@ EOF
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
 }
 
 @test "connectInject/Deployment: init container is created when global.acls.manageSystemACLs=true and has correct command with Partitions enabled" {
@@ -1036,7 +1071,7 @@ EOF
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
-      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method"))' | tee /dev/stderr)
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
@@ -1058,6 +1093,10 @@ EOF
 
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -1091,6 +1130,10 @@ EOF
 
   local actual=$(echo $object |
       yq '.volumeMounts[1] | any(contains("consul-auto-encrypt-ca-cert"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $object |
+      yq -r '.command | any(contains("-consul-api-timeout=5s"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -1154,7 +1197,7 @@ EOF
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
-      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method"))' | tee /dev/stderr)
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 }
 
@@ -1180,7 +1223,7 @@ EOF
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
-      yq -r '.command | any(contains("-acl-auth-method=RELEASE-NAME-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
+      yq -r '.command | any(contains("-acl-auth-method=release-name-consul-k8s-component-auth-method-dc2"))' | tee /dev/stderr)
   [ "${actual}" = "true" ]
 
   local actual=$(echo $object |
@@ -1594,6 +1637,36 @@ EOF
 }
 
 #--------------------------------------------------------------------
+# sidecarProxy.concurrency
+
+@test "connectInject/Deployment: by default envoy concurrency is set to 2" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-default-envoy-proxy-concurrency=2"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: envoy concurrency can bet set" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.sidecarProxy.concurrency=4' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-default-envoy-proxy-concurrency=4"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
 # priorityClassName
 
 @test "connectInject/Deployment: no priorityClassName by default" {
@@ -1617,6 +1690,30 @@ EOF
       yq -r '.spec.template.spec.priorityClassName' | tee /dev/stderr)
 
   [ "${actual}" = "name" ]
+}
+
+#--------------------------------------------------------------------
+# annotations
+
+@test "connectInject/Deployment: no annotations defined by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations | del(."consul.hashicorp.com/connect-inject")' | tee /dev/stderr)
+  [ "${actual}" = "{}" ]
+}
+
+@test "connectInject/Deployment: annotations can be set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.annotations=foo: bar' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata.annotations.foo' | tee /dev/stderr)
+  [ "${actual}" = "bar" ]
 }
 
 #--------------------------------------------------------------------
@@ -1699,6 +1796,248 @@ EOF
 }
 
 #--------------------------------------------------------------------
+# cni 
+
+@test "connectInject/Deployment: cni is disabled by default" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-enable-cni=false"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: cni can be enabled by setting connectInject.cni.enabled=true" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'connectInject.cni.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command' | tee /dev/stderr)
+
+  local actual=$(echo "$cmd" |
+    yq 'any(contains("-enable-cni=true"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# peering
+
+@test "connectInject/Deployment: peering is not set by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-enable-peering=true"))' | tee /dev/stderr)
+
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: -enable-peering=true is set when global.peering.enabled is true" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-enable-peering=true"))' | tee /dev/stderr)
+
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: fails if peering is enabled but connect inject is not" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=false' \
+      --set 'global.peering.enabled=true' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "setting global.peering.enabled to true requires connectInject.enabled to be true" ]]
+}
+
+@test "connectInject/Deployment: -read-server-expose-service=true is set when global.peering.enabled is true and global.peering.tokenGeneration.serverAddresses.source is empty" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-read-server-expose-service=true"))' | tee /dev/stderr)
+
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: -read-server-expose-service=true is set when servers are enabled and peering is enabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'global.enabled=false' \
+      --set 'server.enabled=true' \
+      --set 'client.enabled=true' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-read-server-expose-service=true"))' | tee /dev/stderr)
+
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: -read-server-expose-service is not set when servers are disabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'server.enabled=false' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-read-server-expose-service=true"))' | tee /dev/stderr)
+
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: -read-server-expose-service is not set when peering is disabled" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=false' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-read-server-expose-service=true"))' | tee /dev/stderr)
+
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: -read-server-expose-service is not set when global.peering.tokenGeneration.serverAddresses.source is set to consul" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      --set 'global.peering.tokenGeneration.serverAddresses.source=consul' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-read-server-expose-service=true"))' | tee /dev/stderr)
+
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: fails server address source is an invalid value" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      --set 'global.peering.tokenGeneration.serverAddresses.source=notempty' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "global.peering.tokenGeneration.serverAddresses.source must be one of empty string, 'consul' or 'static'" ]]
+}
+
+@test "connectInject/Deployment: -read-server-expose-service and -token-server-address is not set when global.peering.tokenGeneration.serverAddresses.source is consul" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      --set 'global.peering.tokenGeneration.serverAddresses.source=consul' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command')
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-read-server-expose-service=true"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: when servers are not enabled and externalServers.enabled=true, passes in -token-server-address flags with hosts" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'server.enabled=false' \
+      --set 'externalServers.enabled=true' \
+      --set 'externalServers.hosts[0]=1.2.3.4' \
+      --set 'externalServers.hosts[1]=2.2.3.4' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command')
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address=\"1.2.3.4:8503\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address=\"2.2.3.4:8503\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: externalServers.grpcPort can be customized" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'server.enabled=false' \
+      --set 'externalServers.enabled=true' \
+      --set 'externalServers.hosts[0]=1.2.3.4' \
+      --set 'externalServers.hosts[1]=2.2.3.4' \
+      --set 'externalServers.grpcPort=1234' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command')
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address=\"1.2.3.4:1234\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address=\"2.2.3.4:1234\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: when peering token generation source is static passes in -token-server-address flags with static addresses" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'global.peering.tokenGeneration.serverAddresses.source=static' \
+      --set 'global.peering.tokenGeneration.serverAddresses.static[0]=1.2.3.4:1234' \
+      --set 'global.peering.tokenGeneration.serverAddresses.static[1]=2.2.3.4:2234' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command')
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address=\"1.2.3.4:1234\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address=\"2.2.3.4:2234\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: when peering token generation source is static and externalHosts are set, passes in -token-server-address flags with static addresses, not externalServers.hosts" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'server.enabled=false' \
+      --set 'global.peering.tokenGeneration.serverAddresses.source=static' \
+      --set 'global.peering.tokenGeneration.serverAddresses.static[0]=1.2.3.4:1234' \
+      --set 'global.peering.tokenGeneration.serverAddresses.static[1]=2.2.3.4:2234' \
+      --set 'externalServers.enabled=true' \
+      --set 'externalServers.hosts[0]=1.1.1.1' \
+      --set 'externalServers.hosts[1]=2.2.2.2' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.peering.enabled=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command')
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address=\"1.2.3.4:1234\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+
+  local actual=$(echo $command | jq -r ' . | any(contains("-token-server-address=\"2.2.3.4:2234\""))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
 # openshift
 
 @test "connectInject/Deployment: openshift is is not set by default" {
@@ -1752,6 +2091,76 @@ EOF
 }
 
 #--------------------------------------------------------------------
+# get-auto-encrypt-client-ca
+
+@test "connectInject/Deployment: get-auto-encrypt-client-ca uses server's stateful set address by default and passes ca cert" {
+  cd `chart_dir`
+  local command=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.initContainers[] | select(.name == "get-auto-encrypt-client-ca").command | join(" ")' | tee /dev/stderr)
+
+  # check server address
+  actual=$(echo $command | jq ' . | contains("-server-addr=release-name-consul-server")')
+  [ "${actual}" = "true" ]
+
+  # check server port
+  actual=$(echo $command | jq ' . | contains("-server-port=8501")')
+  [ "${actual}" = "true" ]
+
+  # check server's CA cert
+  actual=$(echo $command | jq ' . | contains("-ca-file=/consul/tls/ca/tls.crt")')
+  [ "${actual}" = "true" ]
+
+  # check consul-api-timeout
+  actual=$(echo $command | jq ' . | contains("-consul-api-timeout=5s")')
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
+# enable-webhook-ca-update
+
+@test "connectInject/Deployment: enable-webhook-ca-update flag is not set on command by default" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.tls.caCert.secretName=foo' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-enable-webhook-ca-update"))' | tee /dev/stderr)
+  [ "${actual}" = "false" ]
+}
+
+@test "connectInject/Deployment: enable-webhook-ca-update flag is not set on command when using vault" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=test' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      --set 'global.secretsBackend.vault.ca.secretKey=tls.crt' \
+      --set 'global.secretsBackend.vault.connectInjectRole=test' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=foo/tls' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-enable-webhook-ca-update"))' | tee /dev/stderr)
+  [ "${actual}" = "true" ]
+}
+
+#--------------------------------------------------------------------
 # Vault
 
 @test "connectInject/Deployment: vault CA is not configured by default" {
@@ -1765,7 +2174,7 @@ EOF
     --set 'global.secretsBackend.vault.enabled=true' \
     --set 'global.secretsBackend.vault.consulClientRole=foo' \
     --set 'global.secretsBackend.vault.consulServerRole=test' \
-    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test2' \
     . | tee /dev/stderr |
       yq -r '.spec.template' | tee /dev/stderr)
 
@@ -1786,7 +2195,7 @@ EOF
     --set 'global.secretsBackend.vault.enabled=true' \
     --set 'global.secretsBackend.vault.consulClientRole=foo' \
     --set 'global.secretsBackend.vault.consulServerRole=test' \
-    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test2' \
     --set 'global.secretsBackend.vault.ca.secretName=ca' \
     . | tee /dev/stderr |
       yq -r '.spec.template' | tee /dev/stderr)
@@ -1808,7 +2217,7 @@ EOF
     --set 'global.secretsBackend.vault.enabled=true' \
     --set 'global.secretsBackend.vault.consulClientRole=foo' \
     --set 'global.secretsBackend.vault.consulServerRole=test' \
-    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test2' \
     --set 'global.secretsBackend.vault.ca.secretKey=tls.crt' \
     . | tee /dev/stderr |
       yq -r '.spec.template' | tee /dev/stderr)
@@ -1830,7 +2239,7 @@ EOF
     --set 'global.secretsBackend.vault.enabled=true' \
     --set 'global.secretsBackend.vault.consulClientRole=foo' \
     --set 'global.secretsBackend.vault.consulServerRole=test' \
-    --set 'global.secretsBackend.vault.consulCARole=test' \
+    --set 'global.secretsBackend.vault.consulCARole=test2' \
     --set 'global.secretsBackend.vault.ca.secretName=ca' \
     --set 'global.secretsBackend.vault.ca.secretKey=tls.crt' \
     . | tee /dev/stderr |
@@ -1842,6 +2251,60 @@ EOF
   [ "${actual}" = "/vault/custom/tls.crt" ]
 }
 
+@test "connectInject/Deployment: fails if vault is enabled and global.secretsBackend.vault.connectInjectRole is set but global.secretsBackend.vault.connectInject.tlsCert.secretName and global.secretsBackend.vault.connectInject.caCert.secretName are not" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      --set 'global.secretsBackend.vault.connectInjectRole=connectinjectcarole' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "When one of the following has been set, all must be set:  global.secretsBackend.vault.connectInjectRole, global.secretsBackend.vault.connectInject.tlsCert.secretName, global.secretsBackend.vault.connectInject.caCert.secretName, global.secretsBackend.vault.controllerRole, global.secretsBackend.vault.controller.tlsCert.secretName, and global.secretsBackend.vault.controller.caCert.secretName." ]]
+}
+
+@test "connectInject/Deployment: fails if vault is enabled and global.secretsBackend.vault.connectInject.tlsCert.secretName is set but global.secretsBackend.vault.connectInjectRole and global.secretsBackend.vault.connectInject.caCert.secretName are not" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=connectInject/Deployment: enable-webhook-ca-update flag is not set on command when using vaulttest' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=foo/tls' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "When one of the following has been set, all must be set:  global.secretsBackend.vault.connectInjectRole, global.secretsBackend.vault.connectInject.tlsCert.secretName, global.secretsBackend.vault.connectInject.caCert.secretName, global.secretsBackend.vault.controllerRole, global.secretsBackend.vault.controller.tlsCert.secretName, and global.secretsBackend.vault.controller.caCert.secretName." ]]
+}
+
+@test "connectInject/Deployment: fails if vault is enabled and global.secretsBackend.vault.connectInject.caCert.secretName is set but global.secretsBackend.vault.connectInjectRole and global.secretsBackend.vault.connectInject.tlsCert.secretName are not" {
+  cd `chart_dir`
+  run helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.agentAnnotations=foo: bar' .
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "When one of the following has been set, all must be set:  global.secretsBackend.vault.connectInjectRole, global.secretsBackend.vault.connectInject.tlsCert.secretName, global.secretsBackend.vault.connectInject.caCert.secretName, global.secretsBackend.vault.controllerRole, global.secretsBackend.vault.controller.tlsCert.secretName, and global.secretsBackend.vault.controller.caCert.secretName." ]]
+}
+
 @test "connectInject/Deployment: vault tls annotations are set when tls is enabled" {
   cd `chart_dir`
   local cmd=$(helm template \
@@ -1850,8 +2313,118 @@ EOF
       --set 'global.secretsBackend.vault.enabled=true' \
       --set 'global.secretsBackend.vault.consulClientRole=foo' \
       --set 'global.secretsBackend.vault.consulServerRole=bar' \
-      --set 'global.secretsBackend.vault.consulCARole=test' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
       --set 'global.tls.enabled=true' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'server.serverCert.secretName=pki_int/issue/test' \
+      --set 'global.tls.caCert.secretName=pki_int/cert/ca' \
+      --set 'global.secretsBackend.vault.connectInjectRole=test' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata' | tee /dev/stderr)
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-serverca.crt"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"pki_int/cert/ca\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-serverca.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "pki_int/cert/ca" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-ca.crt"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"foo/ca\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-ca.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "foo/ca" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/secret-volume-path-ca.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "/vault/secrets/connect-injector/certs" ]
+  
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-init-first"]' | tee /dev/stderr)"
+  [ "${actual}" = "true" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject"]' | tee /dev/stderr)"
+  [ "${actual}" = "true" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/role"]' | tee /dev/stderr)"
+  [ "${actual}" = "test" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-tls.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "pki/issue/connect-webhook-cert-dc1" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-tls.crt"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"pki/issue/connect-webhook-cert-dc1\" \"common_name=release-name-consul-connect-injector\"\n\"alt_names=release-name-consul-connect-injector,release-name-consul-connect-injector.default,release-name-consul-connect-injector.default.svc,release-name-consul-connect-injector.default.svc.cluster.local\" -}}\n{{- .Data.certificate -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/secret-volume-path-tls.crt"]' | tee /dev/stderr)"
+  [ "${actual}" = "/vault/secrets/connect-injector/certs" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-tls.key"]' | tee /dev/stderr)"
+  [ "${actual}" = "pki/issue/connect-webhook-cert-dc1" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/agent-inject-template-tls.key"]' | tee /dev/stderr)"
+  local expected=$'{{- with secret \"pki/issue/connect-webhook-cert-dc1\" \"common_name=release-name-consul-connect-injector\"\n\"alt_names=release-name-consul-connect-injector,release-name-consul-connect-injector.default,release-name-consul-connect-injector.default.svc,release-name-consul-connect-injector.default.svc.cluster.local\" -}}\n{{- .Data.private_key -}}\n{{- end -}}'
+  [ "${actual}" = "${expected}" ]
+
+  local actual="$(echo $cmd |
+      yq -r '.annotations["vault.hashicorp.com/secret-volume-path-tls.key"]' | tee /dev/stderr)"
+  [ "${actual}" = "/vault/secrets/connect-injector/certs" ]
+}
+
+@test "connectInject/Deployment: vault tls-cert-dir flag is set to /vault/secrets/connect-injector/certs" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+                 . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].command | any(contains("-tls-cert-dir=/vault/secrets/connect-injector/certs"))' | tee /dev/stderr)
+
+  [ "${actual}" = "true" ]
+}
+
+@test "connectInject/Deployment: vault ca annotations are set when tls is enabled" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
       --set 'global.tls.enableAutoEncrypt=true' \
       --set 'server.serverCert.secretName=pki_int/issue/test' \
       --set 'global.tls.caCert.secretName=pki_int/cert/ca' \
@@ -1866,18 +2439,72 @@ EOF
   local actual="$(echo $cmd |
       yq -r '.annotations["vault.hashicorp.com/agent-inject-secret-serverca.crt"]' | tee /dev/stderr)"
   [ "${actual}" = "pki_int/cert/ca" ]
+}
 
-  local actual="$(echo $cmd |
-      yq -r '.annotations["vault.hashicorp.com/agent-init-first"]' | tee /dev/stderr)"
-  [ "${actual}" = "true" ]
+@test "connectInject/Deployment: vault does not add certs volume when global.secretsBackend.vault.connectInject.tlsCert.secretName is set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.volumes[] | select(.name == "certs")' | tee /dev/stderr)
+  [ "${actual}" == "" ]
+}
 
-  local actual="$(echo $cmd |
-      yq -r '.annotations["vault.hashicorp.com/agent-inject"]' | tee /dev/stderr)"
-  [ "${actual}" = "true" ]
+@test "connectInject/Deployment: vault does not add certs volumeMounts when global.secretsBackend.vault.connectInject.tlsCert.secretName is set" {
+  cd `chart_dir`
+  local actual=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=foo' \
+      --set 'global.secretsBackend.vault.consulServerRole=bar' \
+      --set 'global.secretsBackend.vault.consulCARole=test2' \
+      --set 'connectInject.enabled=true' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.connectInjectRole=inject-ca-role' \
+      --set 'global.secretsBackend.vault.connectInject.tlsCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.connectInject.caCert.secretName=pki/issue/connect-webhook-cert-dc1' \
+      --set 'global.secretsBackend.vault.controllerRole=test' \
+      --set 'global.secretsBackend.vault.controller.caCert.secretName=foo/ca' \
+      --set 'global.secretsBackend.vault.controller.tlsCert.secretName=foo/tls' \
+      . | tee /dev/stderr |
+      yq '.spec.template.spec.containers[0].volumeMounts[] | select(.name == "certs")' | tee /dev/stderr)
+  [ "${actual}" == "" ]
+}
+
+@test "connectInject/Deployment: vault vault.hashicorp.com/role set to global.secretsBackend.vault.consulCARole if global.secretsBackend.vault.connectInjectRole is not set" {
+  cd `chart_dir`
+  local cmd=$(helm template \
+      -s templates/connect-inject-deployment.yaml  \
+      --set 'connectInject.enabled=true' \
+      --set 'global.secretsBackend.vault.enabled=true' \
+      --set 'global.secretsBackend.vault.consulClientRole=test' \
+      --set 'global.secretsBackend.vault.consulServerRole=foo' \
+      --set 'global.tls.enabled=true' \
+      --set 'global.tls.caCert.secretName=foo' \
+      --set 'global.tls.enableAutoEncrypt=true' \
+      --set 'global.secretsBackend.vault.consulCARole=carole' \
+      . | tee /dev/stderr |
+      yq -r '.spec.template.metadata' | tee /dev/stderr)
 
   local actual="$(echo $cmd |
       yq -r '.annotations["vault.hashicorp.com/role"]' | tee /dev/stderr)"
-  [ "${actual}" = "test" ]
+  [ "${actual}" = "carole" ]
 }
 
 #--------------------------------------------------------------------
@@ -1924,10 +2551,6 @@ EOF
 
 @test "connectInject/Deployment: fails when consulDestinationNamespace=universal" {
   reservedNameTest "universal"
-}
-
-@test "connectInject/Deployment: fails when consulDestinationNamespace=consul" {
-  reservedNameTest "consul"
 }
 
 @test "connectInject/Deployment: fails when consulDestinationNamespace=operator" {

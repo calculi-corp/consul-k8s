@@ -25,6 +25,9 @@ const staticServerService = "static-server"
 // and non-auto-encrypt secure installations, so testing just one is enough.
 func TestSyncCatalogNamespaces(t *testing.T) {
 	cfg := suite.Config()
+	if cfg.EnableCNI {
+		t.Skipf("skipping because -enable-cni is set and sync catalog is already tested with regular tproxy")
+	}
 	if !cfg.EnableEnterprise {
 		t.Skipf("skipping this test because -enable-enterprise is not set")
 	}
@@ -98,7 +101,7 @@ func TestSyncCatalogNamespaces(t *testing.T) {
 			logger.Log(t, "creating a static-server with a service")
 			k8s.DeployKustomize(t, staticServerOpts, cfg.NoCleanupOnFailure, cfg.DebugDirectory, "../fixtures/bases/static-server")
 
-			consulClient := consulCluster.SetupConsulClient(t, c.secure)
+			consulClient, _ := consulCluster.SetupConsulClient(t, c.secure)
 
 			logger.Log(t, "checking that the service has been synced to Consul")
 			var services map[string][]string

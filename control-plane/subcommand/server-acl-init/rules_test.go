@@ -480,6 +480,8 @@ partition "default" {
 func TestSyncRules(t *testing.T) {
 	cases := []struct {
 		Name                           string
+		EnablePartitions               bool
+		PartitionName                  string
 		EnableNamespaces               bool
 		ConsulSyncDestinationNamespace string
 		EnableSyncK8SNSMirroring       bool
@@ -489,6 +491,9 @@ func TestSyncRules(t *testing.T) {
 	}{
 		{
 			Name:                           "Namespaces are disabled",
+			EnablePartitions:               false,
+			PartitionName:                  "",
+			EnableNamespaces:               false,
 			ConsulSyncDestinationNamespace: "sync-namespace",
 			EnableSyncK8SNSMirroring:       true,
 			SyncK8SNSMirroringPrefix:       "prefix-",
@@ -496,15 +501,18 @@ func TestSyncRules(t *testing.T) {
 			Expected: `node "k8s-sync" {
     policy = "write"
   }
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
-    policy = "write"
-  }`,
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }`,
 		},
 		{
 			Name:                           "Namespaces are disabled, non-default node name",
+			EnablePartitions:               false,
+			PartitionName:                  "",
+			EnableNamespaces:               false,
 			ConsulSyncDestinationNamespace: "sync-namespace",
 			EnableSyncK8SNSMirroring:       true,
 			SyncK8SNSMirroringPrefix:       "prefix-",
@@ -512,95 +520,109 @@ func TestSyncRules(t *testing.T) {
 			Expected: `node "new-node-name" {
     policy = "write"
   }
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
-    policy = "write"
-  }`,
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }`,
 		},
 		{
 			Name:                           "Namespaces are enabled, mirroring disabled",
+			EnablePartitions:               false,
+			PartitionName:                  "",
 			EnableNamespaces:               true,
 			ConsulSyncDestinationNamespace: "sync-namespace",
+			EnableSyncK8SNSMirroring:       false,
 			SyncK8SNSMirroringPrefix:       "prefix-",
 			SyncConsulNodeName:             "k8s-sync",
 			Expected: `node "k8s-sync" {
     policy = "write"
   }
-operator = "write"
-acl = "write"
-namespace "sync-namespace" {
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
-    policy = "write"
-  }
-}`,
+  operator = "write"
+  acl = "write"
+  namespace "sync-namespace" {
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }`,
 		},
 		{
 			Name:                           "Namespaces are enabled, mirroring disabled, non-default node name",
+			EnablePartitions:               false,
+			PartitionName:                  "",
 			EnableNamespaces:               true,
 			ConsulSyncDestinationNamespace: "sync-namespace",
+			EnableSyncK8SNSMirroring:       false,
 			SyncK8SNSMirroringPrefix:       "prefix-",
 			SyncConsulNodeName:             "new-node-name",
 			Expected: `node "new-node-name" {
     policy = "write"
   }
-operator = "write"
-acl = "write"
-namespace "sync-namespace" {
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
-    policy = "write"
-  }
-}`,
+  operator = "write"
+  acl = "write"
+  namespace "sync-namespace" {
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }`,
 		},
 		{
 			Name:                           "Namespaces are enabled, mirroring enabled, prefix empty",
+			EnablePartitions:               false,
+			PartitionName:                  "",
 			EnableNamespaces:               true,
 			ConsulSyncDestinationNamespace: "sync-namespace",
 			EnableSyncK8SNSMirroring:       true,
+			SyncK8SNSMirroringPrefix:       "",
 			SyncConsulNodeName:             "k8s-sync",
 			Expected: `node "k8s-sync" {
     policy = "write"
   }
-operator = "write"
-acl = "write"
-namespace_prefix "" {
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
-    policy = "write"
-  }
-}`,
+  operator = "write"
+  acl = "write"
+  namespace_prefix "" {
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }`,
 		},
 		{
 			Name:                           "Namespaces are enabled, mirroring enabled, prefix empty, non-default node name",
+			EnablePartitions:               false,
+			PartitionName:                  "",
 			EnableNamespaces:               true,
 			ConsulSyncDestinationNamespace: "sync-namespace",
 			EnableSyncK8SNSMirroring:       true,
+			SyncK8SNSMirroringPrefix:       "",
 			SyncConsulNodeName:             "new-node-name",
 			Expected: `node "new-node-name" {
     policy = "write"
   }
-operator = "write"
-acl = "write"
-namespace_prefix "" {
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
-    policy = "write"
-  }
-}`,
+  operator = "write"
+  acl = "write"
+  namespace_prefix "" {
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }`,
 		},
 		{
 			Name:                           "Namespaces are enabled, mirroring enabled, prefix defined",
+			EnablePartitions:               false,
+			PartitionName:                  "",
 			EnableNamespaces:               true,
 			ConsulSyncDestinationNamespace: "sync-namespace",
 			EnableSyncK8SNSMirroring:       true,
@@ -609,19 +631,21 @@ namespace_prefix "" {
 			Expected: `node "k8s-sync" {
     policy = "write"
   }
-operator = "write"
-acl = "write"
-namespace_prefix "prefix-" {
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
-    policy = "write"
-  }
-}`,
+  operator = "write"
+  acl = "write"
+  namespace_prefix "prefix-" {
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }`,
 		},
 		{
 			Name:                           "Namespaces are enabled, mirroring enabled, prefix defined, non-default node name",
+			EnablePartitions:               false,
+			PartitionName:                  "",
 			EnableNamespaces:               true,
 			ConsulSyncDestinationNamespace: "sync-namespace",
 			EnableSyncK8SNSMirroring:       true,
@@ -630,14 +654,170 @@ namespace_prefix "prefix-" {
 			Expected: `node "new-node-name" {
     policy = "write"
   }
-operator = "write"
-acl = "write"
-namespace_prefix "prefix-" {
-  node_prefix "" {
-    policy = "read"
-  }
-  service_prefix "" {
+  operator = "write"
+  acl = "write"
+  namespace_prefix "prefix-" {
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }`,
+		},
+		{
+			Name:                           "Partitions are enabled, Namespaces are enabled, mirroring disabled",
+			EnablePartitions:               true,
+			PartitionName:                  "foo",
+			EnableNamespaces:               true,
+			ConsulSyncDestinationNamespace: "sync-namespace",
+			EnableSyncK8SNSMirroring:       false,
+			SyncK8SNSMirroringPrefix:       "prefix-",
+			SyncConsulNodeName:             "k8s-sync",
+			Expected: `node "k8s-sync" {
     policy = "write"
+  }
+partition "foo" {
+  mesh = "write"
+  acl = "write"
+  namespace "sync-namespace" {
+    policy = "write"
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }
+}`,
+		},
+		{
+			Name:                           "Partitions are enabled, Namespaces are enabled, mirroring disabled, non-default node name",
+			EnablePartitions:               true,
+			PartitionName:                  "foo",
+			EnableNamespaces:               true,
+			ConsulSyncDestinationNamespace: "sync-namespace",
+			EnableSyncK8SNSMirroring:       false,
+			SyncK8SNSMirroringPrefix:       "prefix-",
+			SyncConsulNodeName:             "new-node-name",
+			Expected: `node "new-node-name" {
+    policy = "write"
+  }
+partition "foo" {
+  mesh = "write"
+  acl = "write"
+  namespace "sync-namespace" {
+    policy = "write"
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }
+}`,
+		},
+		{
+			Name:                           "Partitions are enabled, Namespaces are enabled, mirroring enabled, prefix empty",
+			EnablePartitions:               true,
+			PartitionName:                  "foo",
+			EnableNamespaces:               true,
+			ConsulSyncDestinationNamespace: "sync-namespace",
+			EnableSyncK8SNSMirroring:       true,
+			SyncK8SNSMirroringPrefix:       "",
+			SyncConsulNodeName:             "k8s-sync",
+			Expected: `node "k8s-sync" {
+    policy = "write"
+  }
+partition "foo" {
+  mesh = "write"
+  acl = "write"
+  namespace_prefix "" {
+    policy = "write"
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }
+}`,
+		},
+		{
+			Name:                           "Partitions are enabled, Namespaces are enabled, mirroring enabled, prefix empty, non-default node name",
+			EnablePartitions:               true,
+			PartitionName:                  "foo",
+			EnableNamespaces:               true,
+			ConsulSyncDestinationNamespace: "sync-namespace",
+			EnableSyncK8SNSMirroring:       true,
+			SyncK8SNSMirroringPrefix:       "",
+			SyncConsulNodeName:             "new-node-name",
+			Expected: `node "new-node-name" {
+    policy = "write"
+  }
+partition "foo" {
+  mesh = "write"
+  acl = "write"
+  namespace_prefix "" {
+    policy = "write"
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }
+}`,
+		},
+		{
+			Name:                           "Partitions are enabled, Namespaces are enabled, mirroring enabled, prefix defined",
+			EnablePartitions:               true,
+			PartitionName:                  "foo",
+			EnableNamespaces:               true,
+			ConsulSyncDestinationNamespace: "sync-namespace",
+			EnableSyncK8SNSMirroring:       true,
+			SyncK8SNSMirroringPrefix:       "prefix-",
+			SyncConsulNodeName:             "k8s-sync",
+			Expected: `node "k8s-sync" {
+    policy = "write"
+  }
+partition "foo" {
+  mesh = "write"
+  acl = "write"
+  namespace_prefix "prefix-" {
+    policy = "write"
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
+  }
+}`,
+		},
+		{
+			Name:                           "Partitions are enabled, Namespaces are enabled, mirroring enabled, prefix defined, non-default node name",
+			EnablePartitions:               true,
+			PartitionName:                  "foo",
+			EnableNamespaces:               true,
+			ConsulSyncDestinationNamespace: "sync-namespace",
+			EnableSyncK8SNSMirroring:       true,
+			SyncK8SNSMirroringPrefix:       "prefix-",
+			SyncConsulNodeName:             "new-node-name",
+			Expected: `node "new-node-name" {
+    policy = "write"
+  }
+partition "foo" {
+  mesh = "write"
+  acl = "write"
+  namespace_prefix "prefix-" {
+    policy = "write"
+    node_prefix "" {
+      policy = "read"
+    }
+    service_prefix "" {
+      policy = "write"
+    }
   }
 }`,
 		},
@@ -646,6 +826,8 @@ namespace_prefix "prefix-" {
 	for _, tt := range cases {
 		t.Run(tt.Name, func(t *testing.T) {
 			cmd := Command{
+				flagEnablePartitions:               tt.EnablePartitions,
+				flagPartitionName:                  tt.PartitionName,
 				flagEnableNamespaces:               tt.EnableNamespaces,
 				flagConsulSyncDestinationNamespace: tt.ConsulSyncDestinationNamespace,
 				flagEnableSyncK8SNSMirroring:       tt.EnableSyncK8SNSMirroring,
@@ -666,12 +848,14 @@ func TestInjectRules(t *testing.T) {
 	cases := []struct {
 		EnableNamespaces bool
 		EnablePartitions bool
+		EnablePeering    bool
 		PartitionName    string
 		Expected         string
 	}{
 		{
 			EnableNamespaces: false,
 			EnablePartitions: false,
+			EnablePeering:    false,
 			Expected: `
   node_prefix "" {
     policy = "write"
@@ -684,6 +868,7 @@ func TestInjectRules(t *testing.T) {
 		{
 			EnableNamespaces: true,
 			EnablePartitions: false,
+			EnablePeering:    false,
 			Expected: `
   operator = "write"
   node_prefix "" {
@@ -698,7 +883,25 @@ func TestInjectRules(t *testing.T) {
 		},
 		{
 			EnableNamespaces: true,
+			EnablePartitions: false,
+			EnablePeering:    true,
+			Expected: `
+  operator = "write"
+  peering = "write"
+  node_prefix "" {
+    policy = "write"
+  }
+  namespace_prefix "" {
+    acl = "write"
+    service_prefix "" {
+      policy = "write"
+    }
+  }`,
+		},
+		{
+			EnableNamespaces: true,
 			EnablePartitions: true,
+			EnablePeering:    false,
 			PartitionName:    "part-1",
 			Expected: `
 partition "part-1" {
@@ -714,16 +917,37 @@ partition "part-1" {
   }
 }`,
 		},
+		{
+			EnableNamespaces: true,
+			EnablePartitions: true,
+			EnablePeering:    true,
+			PartitionName:    "part-1",
+			Expected: `
+partition "part-1" {
+  peering = "write"
+  node_prefix "" {
+    policy = "write"
+  }
+  namespace_prefix "" {
+    policy = "write"
+    acl = "write"
+    service_prefix "" {
+      policy = "write"
+    }
+  }
+}`,
+		},
 	}
 
 	for _, tt := range cases {
-		caseName := fmt.Sprintf("ns=%t, partition=%t", tt.EnableNamespaces, tt.EnablePartitions)
+		caseName := fmt.Sprintf("ns=%t, partition=%t, peering=%t", tt.EnableNamespaces, tt.EnablePartitions, tt.EnablePeering)
 		t.Run(caseName, func(t *testing.T) {
 
 			cmd := Command{
 				flagEnablePartitions: tt.EnablePartitions,
 				flagPartitionName:    tt.PartitionName,
 				flagEnableNamespaces: tt.EnableNamespaces,
+				flagEnablePeering:    tt.EnablePeering,
 			}
 
 			injectorRules, err := cmd.injectRules()

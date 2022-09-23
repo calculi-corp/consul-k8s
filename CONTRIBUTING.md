@@ -35,6 +35,11 @@ You will also need to install the Docker engine:
 - [Docker for Mac](https://docs.docker.com/engine/installation/mac/)
 - [Docker for Windows](https://docs.docker.com/engine/installation/windows/)
 - [Docker for Linux](https://docs.docker.com/engine/installation/linux/ubuntulinux/)
+ 
+Install [gox](https://github.com/mitchellh/gox) (v1.14+). For Mac and Linux:
+  ```bash
+  brew install gox
+  ```
 
 Clone the repository:
 
@@ -573,7 +578,7 @@ very quickly. These should be used for fast feedback during development.
 The acceptance tests require a Kubernetes cluster with a configured `kubectl`.
 
 ### Prerequisites
-* [Bats](https://github.com/bats-core/bats-core)
+* [Bats](https://github.com/bats-core/bats-core) (Currently, must use v1.6.0+.)
   ```bash
   brew install bats-core
   ```
@@ -581,7 +586,7 @@ The acceptance tests require a Kubernetes cluster with a configured `kubectl`.
   ```bash
   brew install python-yq
   ```
-* [Helm 3](https://helm.sh) (Currently, must use v3.6.3. Also, Helm 2 is not supported) 
+* [Helm 3](https://helm.sh) (Currently, must use v3.8.0+.) 
   ```bash
   brew install kubernetes-helm
   ```

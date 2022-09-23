@@ -58,7 +58,7 @@ func TestIngressGatewaySingleNamespace(t *testing.T) {
 
 			consulCluster.Create(t)
 
-			consulClient := consulCluster.SetupConsulClient(t, c.secure)
+			consulClient, _ := consulCluster.SetupConsulClient(t, c.secure)
 
 			// Create the destination namespace in the non-secure case.
 			// In the secure installation, this namespace is created by the server-acl-init job.
@@ -129,7 +129,7 @@ func TestIngressGatewaySingleNamespace(t *testing.T) {
 				// via the bounce pod. It should fail to connect with the
 				// static-server pod because of intentions.
 				logger.Log(t, "testing intentions prevent ingress")
-				k8s.CheckStaticServerConnectionFailing(t, nsK8SOptions, staticClientName, "-H", "Host: static-server.ingress.consul", ingressGatewayService)
+				k8s.CheckStaticServerConnectionFailing(t, nsK8SOptions, StaticClientName, "-H", "Host: static-server.ingress.consul", ingressGatewayService)
 
 				// Now we create the allow intention.
 				logger.Log(t, "creating ingress-gateway => static-server intention")
@@ -151,7 +151,7 @@ func TestIngressGatewaySingleNamespace(t *testing.T) {
 			// Test that we can make a call to the ingress gateway
 			// via the static-client pod. It should route to the static-server pod.
 			logger.Log(t, "trying calls to ingress gateway")
-			k8s.CheckStaticServerConnectionSuccessful(t, nsK8SOptions, staticClientName, "-H", "Host: static-server.ingress.consul", ingressGatewayService)
+			k8s.CheckStaticServerConnectionSuccessful(t, nsK8SOptions, StaticClientName, "-H", "Host: static-server.ingress.consul", ingressGatewayService)
 		})
 	}
 }
@@ -223,7 +223,7 @@ func TestIngressGatewayNamespaceMirroring(t *testing.T) {
 			logger.Logf(t, "creating static-client in %s namespace", testNamespace)
 			k8s.DeployKustomize(t, nsK8SOptions, cfg.NoCleanupOnFailure, cfg.DebugDirectory, "../fixtures/bases/static-client")
 
-			consulClient := consulCluster.SetupConsulClient(t, c.secure)
+			consulClient, _ := consulCluster.SetupConsulClient(t, c.secure)
 
 			// With the cluster up, we can create our ingress-gateway config entry.
 			logger.Log(t, "creating config entry")
@@ -255,7 +255,7 @@ func TestIngressGatewayNamespaceMirroring(t *testing.T) {
 				// via the bounce pod. It should fail to connect with the
 				// static-server pod because of intentions.
 				logger.Log(t, "testing intentions prevent ingress")
-				k8s.CheckStaticServerConnectionFailing(t, nsK8SOptions, staticClientName, "-H", "Host: static-server.ingress.consul", ingressGatewayService)
+				k8s.CheckStaticServerConnectionFailing(t, nsK8SOptions, StaticClientName, "-H", "Host: static-server.ingress.consul", ingressGatewayService)
 
 				// Now we create the allow intention.
 				logger.Log(t, "creating ingress-gateway => static-server intention")
@@ -277,7 +277,7 @@ func TestIngressGatewayNamespaceMirroring(t *testing.T) {
 			// Test that we can make a call to the ingress gateway
 			// via the static-client pod. It should route to the static-server pod.
 			logger.Log(t, "trying calls to ingress gateway")
-			k8s.CheckStaticServerConnectionSuccessful(t, nsK8SOptions, staticClientName, "-H", "Host: static-server.ingress.consul", ingressGatewayService)
+			k8s.CheckStaticServerConnectionSuccessful(t, nsK8SOptions, StaticClientName, "-H", "Host: static-server.ingress.consul", ingressGatewayService)
 		})
 	}
 }

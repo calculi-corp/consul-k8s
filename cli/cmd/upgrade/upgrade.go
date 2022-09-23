@@ -157,9 +157,6 @@ func (c *Command) init() {
 	})
 
 	c.help = c.set.Help()
-
-	// c.Init() calls the embedded BaseCommand's initialization function.
-	c.Init()
 }
 
 func (c *Command) Run(args []string) int {
@@ -230,7 +227,7 @@ func (c *Command) Run(args []string) int {
 	}
 	c.UI.Output("Loaded charts", terminal.WithSuccessStyle())
 
-	currentChartValues, err := helm.FetchChartValues(namespace, settings, uiLogger)
+	currentChartValues, err := helm.FetchChartValues(namespace, name, settings, uiLogger)
 	if err != nil {
 		c.UI.Output(err.Error(), terminal.WithErrorStyle())
 		return 1
