@@ -1,6 +1,6 @@
 {
 	"metadata": {
-		"version": 1
+		"version": 2
 	},
 	"application": {
 		"name": "consul-k8s",
@@ -63,7 +63,7 @@
 					},
 					{
 						"name": "privateRegistry.url",
-						"value": "gr.docker_registry.server",
+						"value": "((gr.docker_registry.server))",
 						"type": "string"
 					},
 					{
@@ -242,13 +242,7 @@
 		"exit_actions": {},
 		"default_properties": [],
 		"deployment_files": [],
-		"application_init": {},
-		"releases": [
-			{
-				"name": "consul",
-				"version": "latest"
-			}
-		]
+		"application_init": {}
 	},
 	"organization": {
 		"orgname": "GR-Product"
