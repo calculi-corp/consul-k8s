@@ -59,7 +59,7 @@
 				"properties": [
 					{
 						"name": "global.openshift.enabled",
-						"value": "true",
+						"value": true,
 						"type": "boolean"
 					},
 					{
@@ -154,7 +154,7 @@
 					},
 					{
 						"name": "syncCatalog.k8sAllowNamespaces",
-						"value": "[\"((application.name))-((segment.name))\"]",
+						"value": "[\"((application.name))-isolation\"]",
 						"description": "Set to '*' for Production deployments",
 						"type": "array"
 					},
