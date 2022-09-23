@@ -215,7 +215,7 @@
 						"docker_registry_alias_id": "cc9edc73-f30b-4c9a-5d01-e03f7930a904",
 						"name": "((application.name))",
 						"cluster_name": "",
-						"namespace": "((application.name))-((segment.name))",
+						"namespace": "((application.name))-isolation",
 						"replicas": 1,
 						"containers": [
 							{
