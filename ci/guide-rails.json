@@ -58,6 +58,11 @@
 				"exit_actions": {},
 				"properties": [
 					{
+						"name": "preparedQuery.enabled",
+						"value": true,
+						"type": "boolean"
+					},
+					{
 						"name": "global.openshift.enabled",
 						"value": true,
 						"type": "boolean"

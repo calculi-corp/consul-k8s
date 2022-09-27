@@ -3139,3 +3139,61 @@ privateRegistry:
   password: <enter password here>
 mkcerts:
   image: registry.guide-rails.io/guide-rails/mkcerts
+
+# Consul prepared queries: https://www.consul.io/api-docs/query
+preparedQuery:
+  enabled: false
+  # https://www.consul.io/api-docs/query#name
+  name: 
+  # https://www.consul.io/api-docs/query#session
+  session:
+  # https://www.consul.io/api-docs/query#token
+  token:
+  # https://www.consul.io/api-docs/query#prepared-query-templates
+  template:
+    # https://www.consul.io/api-docs/query#type
+    type: name_prefix_match
+    # https://www.consul.io/api-docs/query#regexp
+    regexp:
+    # https://www.consul.io/api-docs/query#removeemptytags
+    removeEmptyTags: false
+  # https://www.consul.io/api-docs/query#service
+  service:
+    # https://www.consul.io/api-docs/query#service-1
+    service: ${name.full}
+    # https://www.consul.io/api-docs/query#namespace
+    namespace:
+    # https://www.consul.io/api-docs/query#failover
+    failover:
+      # https://www.consul.io/api-docs/query#nearestn
+      nearestN: 1
+      # https://www.consul.io/api-docs/query#datacenters
+      dataCenters: []
+      # https://www.consul.io/api-docs/query#targets
+      targets:
+        # https://www.consul.io/api-docs/query#peername
+        peerName:
+        # https://www.consul.io/api-docs/query#datacenter
+        dataCenter:
+    # https://www.consul.io/api-docs/query#ignorecheckids
+    ignoreCheckIDs: []
+    # https://www.consul.io/api-docs/query#onlypassing
+    onlyPassing: false
+    # https://www.consul.io/api-docs/query#near
+    near:
+      # https://www.consul.io/api-docs/query#_agent
+      _agent: false
+      # https://www.consul.io/api-docs/query#_ip
+      _ip: false
+  # https://www.consul.io/api-docs/query#tags
+  tags: []
+  # https://www.consul.io/api-docs/query#nodemeta
+  nodeMeta: {}
+  # https://www.consul.io/api-docs/query#servicemeta
+  serviceMeta: {}
+  # https://www.consul.io/api-docs/query#connect
+  connect: false
+  # https://www.consul.io/api-docs/query#dns
+  dns:
+    # https://www.consul.io/api-docs/query#ttl
+    ttl:

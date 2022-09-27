@@ -1,0 +1,81 @@
+{{- if (or (and (ne (.Values.server.enabled | toString) "-") .Values.server.enabled) (and (eq (.Values.server.enabled | toString) "-") .Values.global.enabled)) }}
+# StatefulSet to run the actual Consul server cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "consul.fullname" . }}-prepared-query
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "consul.name" . }}
+    chart: {{ template "consul.chart" . }}
+    heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
+    component: server
+data:
+  prepared-query.sh: |-
+    #!/bin/sh
+
+    function verifyConsulUp {
+      curl https://${HOST_IP}:8501/v1/status/leader {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }} 2>/dev/null | grep -E '".+"'
+    }
+
+    (while true
+      do
+        returnCode=0
+        verifyConsulUp || returnCode=$?
+        if [ $returnCode -eq 0 ]; then
+          echo "Looking for an existing prepared query"
+          id=$(curl --silent --request GET https://${HOST_IP}:8501/v1/query {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }} | jq .[0].ID -r)
+          if [ "${id}" == "null" ]; then
+            echo "No prepared query found...creating"
+            curl --request POST https://${HOST_IP}:8501/v1/query --data @/consul/prepared-query/configured-query.json {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }}
+          elif [ -s "${id}" ]; then
+            echo "Updating prepared query with ID ${id}"
+            curl --request PUT https://${HOST_IP}:8501/v1/query/${id} --data @/consul/prepared-query/configured-query.json {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }}
+          fi
+          break
+        else
+          sleep 10
+        fi
+      done) | tee -a /consul/prepared-query-logging/prepared-query.log
+    
+  configured-query.json: |-
+    {
+      "Name": "{{ .Values.preparedQuery.name }}",
+      "Session": "{{ .Values.preparedQuery.session }}",
+      "Token": "{{ .Values.preparedQuery.token }}",
+      "Template": {
+        "Type": "{{ .Values.preparedQuery.template.type }}",
+        "Regexp": "{{ .Values.preparedQuery.template.regexp }}",
+        "RemoveEmptyTags": {{ .Values.preparedQuery.template.removeEmptyTags }}
+      },
+      "Service": {
+        "Service": "{{ .Values.preparedQuery.service.service }}",
+        {{- if (and .Values.global.enterpriseLicense.secretName .Values.global.enterpriseLicense.secretKey (not .Values.global.enterpriseLicense.enableLicenseAutoload)) }}
+        "Namespace": "{{ .Values.preparedQuery.service.namespace }}",
+        {{- end }}
+        "Failover": {
+          "NearestN": {{ .Values.preparedQuery.service.failover.nearestN }},
+          "Datacenters": {{ .Values.preparedQuery.service.failover.dataCenters }}
+        },
+        "IgnoreCheckIDs": {{ .Values.preparedQuery.service.ignoreCheckIDs }},
+        "OnlyPassing": {{ .Values.preparedQuery.service.onlyPassing }},
+        {{- if .Values.preparedQuery.service.near.agent }}
+        "Near": "_agent",
+        {{- else if .Values.preparedQuery.service.near.ip }}
+        "Near": "_ip",
+        {{- end }}
+        "Tags": {{ .Values.preparedQuery.tags }},
+        {{- if .Values.preparedQuery.nodeMeta }}
+        "NodeMeta": {{ .Values.preparedQuery.nodeMeta }},
+        {{- end }}
+        {{- if .Values.preparedQuery.serviceMeta }}
+        "ServiceMeta": {{ .Values.preparedQuery.serviceMeta }},
+        {{- end }}
+        "Connect": {{ .Values.preparedQuery.connect }}
+      },
+      "DNS": {
+        "TTL": "{{ .Values.preparedQuery.dns.ttl }}"
+      }
+    }
+{{- end }}
