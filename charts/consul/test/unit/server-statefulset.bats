@@ -199,6 +199,7 @@ load _helpers
 # serverCert
 
 @test "server/StatefulSet: consul-server-cert uses default cert when serverCert.secretName not set" {
+    skip "We are using dynamic certificates generated using the Guide-Rails cert gen process i.e. the 'mkcerts' init container."
     cd `chart_dir`
     local object=$(helm template \
         -s templates/server-statefulset.yaml \
@@ -212,6 +213,7 @@ load _helpers
 }
 
 @test "server/StatefulSet: consul-server-cert uses serverCert.secretName when serverCert (and caCert) are set" {
+  skip "We are using dynamic certificates generated using the Guide-Rails cert gen process i.e. the 'mkcerts' init container."
     cd `chart_dir`
     local object=$(helm template \
         -s templates/server-statefulset.yaml \
