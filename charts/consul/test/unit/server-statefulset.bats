@@ -824,6 +824,7 @@ load _helpers
 # global.openshift.enabled & client.containerSecurityContext
 
 @test "server/StatefulSet: container level securityContexts are not set when global.openshift.enabled=true" {
+  skip "OpenShift definitely requires security context to be set at the container level, otherwise there are Warnings during deployment"
   cd `chart_dir`
   local manifest=$(helm template \
       -s templates/server-statefulset.yaml  \
