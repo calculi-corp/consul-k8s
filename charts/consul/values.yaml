@@ -3144,17 +3144,17 @@ mkcerts:
 preparedQuery:
   enabled: false
   # https://www.consul.io/api-docs/query#name
-  name: 
+  name: ""
   # https://www.consul.io/api-docs/query#session
-  session:
+  session: ""
   # https://www.consul.io/api-docs/query#token
-  token:
+  token: ""
   # https://www.consul.io/api-docs/query#prepared-query-templates
   template:
     # https://www.consul.io/api-docs/query#type
     type: name_prefix_match
     # https://www.consul.io/api-docs/query#regexp
-    regexp:
+    regexp: ""
     # https://www.consul.io/api-docs/query#removeemptytags
     removeEmptyTags: false
   # https://www.consul.io/api-docs/query#service
@@ -3162,7 +3162,7 @@ preparedQuery:
     # https://www.consul.io/api-docs/query#service-1
     service: ${name.full}
     # https://www.consul.io/api-docs/query#namespace
-    namespace:
+    namespace: ""
     # https://www.consul.io/api-docs/query#failover
     failover:
       # https://www.consul.io/api-docs/query#nearestn
@@ -3172,9 +3172,9 @@ preparedQuery:
       # https://www.consul.io/api-docs/query#targets
       targets:
         # https://www.consul.io/api-docs/query#peername
-        peerName:
+        peerName: ""
         # https://www.consul.io/api-docs/query#datacenter
-        dataCenter:
+        dataCenter: ""
     # https://www.consul.io/api-docs/query#ignorecheckids
     ignoreCheckIDs: []
     # https://www.consul.io/api-docs/query#onlypassing
@@ -3196,4 +3196,4 @@ preparedQuery:
   # https://www.consul.io/api-docs/query#dns
   dns:
     # https://www.consul.io/api-docs/query#ttl
-    ttl:
+    ttl: ""
