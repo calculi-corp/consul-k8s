@@ -51,7 +51,6 @@
 			{
 				"name": "Isolation",
 				"segment_type": "isolation",
-				"persistent": false,
 				"run_after": [
 					"Build"
 				],
@@ -257,8 +256,6 @@
 			{
 				"name": "Production",
 				"segment_type": "production",
-				"persistent": false,
-				"gated": true,
 				"run_after": [
 					"Isolation"
 				],
@@ -415,6 +412,7 @@
 						"value": "((application.name))"
 					}
 				],
+				"gated": true,
 				"tasks": [
 					{
 						"name": "consul-k8s",
