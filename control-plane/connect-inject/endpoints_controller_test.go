@@ -435,7 +435,7 @@ func TestProcessUpstreams(t *testing.T) {
 			},
 			expErr: "upstream \"upstream1:1234:dc1\" is invalid: ProxyDefaults mesh gateway mode is neither \"local\" nor \"remote\"",
 			configEntry: func() api.ConfigEntry {
-				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "pd")
+				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "global")
 				pd := ce.(*api.ProxyConfigEntry)
 				pd.MeshGateway.Mode = "bad-mode"
 				return pd
@@ -492,7 +492,7 @@ func TestProcessUpstreams(t *testing.T) {
 				},
 			},
 			configEntry: func() api.ConfigEntry {
-				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "pd")
+				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "global")
 				pd := ce.(*api.ProxyConfigEntry)
 				pd.MeshGateway.Mode = api.MeshGatewayModeLocal
 				return pd
@@ -516,7 +516,7 @@ func TestProcessUpstreams(t *testing.T) {
 				},
 			},
 			configEntry: func() api.ConfigEntry {
-				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "pd")
+				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "global")
 				pd := ce.(*api.ProxyConfigEntry)
 				pd.MeshGateway.Mode = api.MeshGatewayModeRemote
 				return pd
@@ -533,7 +533,7 @@ func TestProcessUpstreams(t *testing.T) {
 			},
 			expErr: "",
 			configEntry: func() api.ConfigEntry {
-				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "pd")
+				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "global")
 				pd := ce.(*api.ProxyConfigEntry)
 				pd.MeshGateway.Mode = "remote"
 				return pd
@@ -634,7 +634,7 @@ func TestProcessUpstreams(t *testing.T) {
 				return pod1
 			},
 			configEntry: func() api.ConfigEntry {
-				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "pd")
+				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "global")
 				pd := ce.(*api.ProxyConfigEntry)
 				pd.MeshGateway.Mode = "remote"
 				return pd
@@ -670,7 +670,7 @@ func TestProcessUpstreams(t *testing.T) {
 				return pod1
 			},
 			configEntry: func() api.ConfigEntry {
-				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "pd")
+				ce, _ := api.MakeConfigEntry(api.ProxyDefaults, "global")
 				pd := ce.(*api.ProxyConfigEntry)
 				pd.MeshGateway.Mode = "remote"
 				return pd
@@ -1522,8 +1522,8 @@ func TestReconcileCreateEndpoint(t *testing.T) {
 				pod1.Annotations[fmt.Sprintf("%sname", annotationMeta)] = "abc"
 				pod1.Annotations[fmt.Sprintf("%sversion", annotationMeta)] = "2"
 				pod1.Annotations[fmt.Sprintf("%spod_name", annotationMeta)] = "$POD_NAME"
-				pod1.Annotations[annotationTags] = "abc,123,$POD_NAME"
-				pod1.Annotations[annotationConnectTags] = "def,456,$POD_NAME"
+				pod1.Annotations[annotationTags] = "abc\\,123,$POD_NAME"
+				pod1.Annotations[annotationConnectTags] = "def\\,456,$POD_NAME"
 				pod1.Annotations[annotationUpstreams] = "upstream1:1234"
 				pod1.Annotations[annotationEnableMetrics] = "true"
 				pod1.Annotations[annotationPrometheusScrapePort] = "12345"
@@ -1567,7 +1567,7 @@ func TestReconcileCreateEndpoint(t *testing.T) {
 						MetaKeyKubeNS:          "default",
 						MetaKeyManagedBy:       managedByValue,
 					},
-					ServiceTags: []string{"abc", "123", "pod1", "def", "456", "pod1"},
+					ServiceTags: []string{"abc,123", "pod1", "def,456", "pod1"},
 				},
 			},
 			expectedProxySvcInstances: []*api.CatalogService{
@@ -1601,7 +1601,7 @@ func TestReconcileCreateEndpoint(t *testing.T) {
 						MetaKeyKubeNS:          "default",
 						MetaKeyManagedBy:       managedByValue,
 					},
-					ServiceTags: []string{"abc", "123", "pod1", "def", "456", "pod1"},
+					ServiceTags: []string{"abc,123", "pod1", "def,456", "pod1"},
 				},
 			},
 			expectedAgentHealthChecks: []*api.AgentCheck{

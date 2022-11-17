@@ -109,7 +109,7 @@ global:
   # image: "hashicorp/consul-enterprise:1.10.0-ent"
   # ```
   # @default: hashicorp/consul:<latest version>
-  image: "hashicorp/consul:1.13.1"
+  image: "hashicorp/consul:1.13.3"
 
   # Array of objects containing image pull secret names that will be applied to each service account.
   # This can be used to reference image pull secrets if using a custom consul or consul-k8s-control-plane Docker image.
@@ -129,7 +129,7 @@ global:
   # image that is used for functionality such as catalog sync.
   # This can be overridden per component.
   # @default: hashicorp/consul-k8s-control-plane:<latest version>
-  imageK8S: hashicorp/consul-k8s-control-plane:0.48.0
+  imageK8S: hashicorp/consul-k8s-control-plane:0.49.1
 
   # The name of the datacenter that the agents should
   # register as. This can't be changed once the Consul cluster is up and running
@@ -515,6 +515,23 @@ global:
       # @type: string
       secretKey: null
 
+    # tolerations configures the taints and tolerations for the server-acl-init
+    # and server-acl-init-cleanup jobs. This should be a multi-line string matching the
+    # Tolerations (https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/) array in a Pod spec.
+    tolerations: ""
+
+    # This value defines `nodeSelector` (https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector)
+    # labels for the server-acl-init and server-acl-init-cleanup jobs pod assignment, formatted as a multi-line string.
+    #
+    # Example:
+    #
+    # ```yaml
+    # nodeSelector: |
+    #   beta.kubernetes.io/arch: amd64
+    # ```
+    #
+    # @type: string
+    nodeSelector: null
 
   # [Enterprise Only] This value refers to a Kubernetes or Vault secret that you have created
   # that contains your enterprise license. It is required if you are using an
@@ -741,13 +758,18 @@ server:
 
   # The StorageClass to use for the servers' StatefulSet storage. It must be
   # able to be dynamically provisioned if you want the storage
-  # to be automatically created. For example, to use local
-  # (https://kubernetes.io/docs/concepts/storage/storage-classes/#local)
+  # to be automatically created. For example, to use 
+  # local(https://kubernetes.io/docs/concepts/storage/storage-classes/#local)
   # storage classes, the PersistentVolumeClaims would need to be manually created.
   # A `null` value will use the Kubernetes cluster's default StorageClass. If a default
   # StorageClass does not exist, you will need to create one.
-  # See https://www.consul.io/docs/install/performance#read-write-tuning for considerations around choosing a
-  # performant storage class.
+  # Refer to the [Read/Write Tuning](https://www.consul.io/docs/install/performance#read-write-tuning) 
+  # section of the Server Performance Requirements documentation for considerations 
+  # around choosing a performant storage class.
+  #
+  # ~> **Note:** The [Reference Architecture](https://learn.hashicorp.com/tutorials/consul/reference-architecture#hardware-sizing-for-consul-servers)
+  # contains best practices and recommendations for selecting suitable
+  # hardware sizes for your Consul servers.
   # @type: string
   storageClass: null
 
@@ -1826,12 +1848,12 @@ syncCatalog:
 
   # Refers to a Kubernetes secret that you have created that contains
   # an ACL token for your Consul cluster which allows the sync process the correct
-  # permissions. This is only needed if ACLs are enabled on the Consul cluster.
+  # permissions. This is only needed if ACLs are managed manually within the Consul cluster, i.e. `global.acls.manageSystemACLs` is `false`.
   aclSyncToken:
-    # The name of the Vault secret that holds the acl sync token.
+    # The name of the Kubernetes secret that holds the acl sync token.
     # @type: string
     secretName: null
-    # The key within the Vault secret that holds the acl sync.
+    # The key within the Kubernetes secret that holds the acl sync token.
     # @type: string
     secretKey: null
 
@@ -2022,7 +2044,20 @@ connectInject:
     # Location on the kubernetes node of all CNI configuration. Should be the absolute path and start with a '/'
     # @type: string
     cniNetDir: "/etc/cni/net.d"
- 
+
+    # If multus CNI plugin is enabled with consul-cni. When enabled, consul-cni will not be installed as a chained
+    # CNI plugin. Instead, a NetworkAttachementDefinition CustomResourceDefinition (CRD) will be created in the helm
+    # release namespace. Following multus plugin standards, an annotation is required in order for the consul-cni plugin
+    # to be executed and for your service to be added to the Consul Service Mesh. 
+    #
+    # Add the annotation `'k8s.v1.cni.cncf.io/networks': '[{ "name":"consul-cni","namespace": "consul" }]'` to your pod
+    # to use the default installed NetworkAttachementDefinition CRD.
+    #
+    # Please refer to the [Multus Quickstart Guide](https://github.com/k8snetworkplumbingwg/multus-cni/blob/master/docs/quickstart.md)
+    # for more information about using multus. 
+    # @type: string
+    multus: false 
+
     # The resource settings for CNI installer daemonset.
     # @recurse: false
     # @type: map
@@ -2988,6 +3023,13 @@ apiGateway:
     # @type: string
     nodeSelector: null
 
+    # This value defines the tolerations that will be assigned to a gateway pod.
+    # This should be a multi-line string matching the
+    # Tolerations (https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/) array in a Pod spec.
+    #
+    # @type: string
+    tolerations: null
+
     # This value defines the type of service created for gateways (e.g. LoadBalancer, ClusterIP)
     serviceType: LoadBalancer
 
@@ -3001,8 +3043,9 @@ apiGateway:
       # Example:
       #
       # ```yaml
-      # service: |
-      # - external-dns.alpha.kubernetes.io/hostname
+      # service:
+      #   annotations: |
+      #   - external-dns.alpha.kubernetes.io/hostname
       # ```
       #
       # @type: string
@@ -3069,6 +3112,12 @@ apiGateway:
     # @type: string
     nodeSelector: null
 
+    # This value defines the tolerations for api-gateway-controller pod, this should be a multi-line string matching the
+    # Tolerations (https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/) array in a Pod spec.
+    #
+    # @type: string
+    tolerations: null
+
     # Configuration for the Service created for the api-gateway-controller
     service:
       # Annotations to apply to the api-gateway-controller service.
@@ -3113,6 +3162,19 @@ webhookCertManager:
   # in a PodSpec.
   # @type: string
   tolerations: null
+
+  # This value defines `nodeSelector` (https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector)
+  # labels for the webhook-cert-manager pod assignment, formatted as a multi-line string.
+  #
+  # Example:
+  #
+  # ```yaml
+  # nodeSelector: |
+  #   beta.kubernetes.io/arch: amd64
+  # ```
+  #
+  # @type: string
+  nodeSelector: null
 
 # Configures a demo Prometheus installation.
 prometheus:
