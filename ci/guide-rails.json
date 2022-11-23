@@ -134,7 +134,7 @@
 					},
 					{
 						"name": "client.enabled",
-						"value": true,
+						"value": false,
 						"type": "boolean"
 					},
 					{
@@ -192,6 +192,26 @@
 						"name": "gr.helm.wait.timeout",
 						"value": "5m",
 						"type": "string"
+					},
+					{
+						"name": "syncCatalog.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.enabled",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "server.replicas",
+						"value": 3,
+						"type": "number"
 					}
 				],
 				"deployment_strategy": {
@@ -339,7 +359,7 @@
 					},
 					{
 						"name": "client.enabled",
-						"value": true,
+						"value": false,
 						"type": "boolean"
 					},
 					{
@@ -397,6 +417,26 @@
 						"name": "gr.helm.wait.timeout",
 						"value": "5m",
 						"type": "string"
+					},
+					{
+						"name": "syncCatalog.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.enabled",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "server.replicas",
+						"value": 3,
+						"type": "number"
 					}
 				],
 				"deployment_strategy": {
