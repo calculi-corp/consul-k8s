@@ -52,8 +52,9 @@ type TestConfig struct {
 	NoCleanupOnFailure bool
 	DebugDirectory     string
 
-	UseKind bool
+	UseAKS  bool
 	UseGKE  bool
+	UseKind bool
 
 	helmChartPath string
 }
@@ -152,7 +153,7 @@ func (t *TestConfig) entImage() (string, error) {
 		preRelease = fmt.Sprintf("-%s", split[1])
 	}
 
-	return fmt.Sprintf("hashicorp/consul-enterprise:%s-ent%s", consulImageVersion, preRelease), nil
+	return fmt.Sprintf("hashicorp/consul-enterprise:%s%s-ent", consulImageVersion, preRelease), nil
 }
 
 // setIfNotEmpty sets key to val in map m if value is not empty.
