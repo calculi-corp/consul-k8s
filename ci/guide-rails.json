@@ -63,7 +63,7 @@
 					},
 					{
 						"name": "global.openshift.enabled",
-						"value": true,
+						"value": false,
 						"type": "boolean"
 					},
 					{
@@ -268,7 +268,7 @@
 					},
 					{
 						"name": "global.openshift.enabled",
-						"value": true,
+						"value": false,
 						"type": "boolean"
 					},
 					{
