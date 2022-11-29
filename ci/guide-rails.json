@@ -51,6 +51,7 @@
 			{
 				"name": "Isolation",
 				"segment_type": "isolation",
+				"persistent": false,
 				"run_after": [
 					"Build"
 				],
@@ -63,7 +64,7 @@
 					},
 					{
 						"name": "global.openshift.enabled",
-						"value": true,
+						"value": false,
 						"type": "boolean"
 					},
 					{
@@ -133,7 +134,7 @@
 					},
 					{
 						"name": "client.enabled",
-						"value": true,
+						"value": false,
 						"type": "boolean"
 					},
 					{
@@ -191,6 +192,26 @@
 						"name": "gr.helm.wait.timeout",
 						"value": "5m",
 						"type": "string"
+					},
+					{
+						"name": "syncCatalog.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.enabled",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "server.replicas",
+						"value": 3,
+						"type": "number"
 					}
 				],
 				"deployment_strategy": {
@@ -215,7 +236,7 @@
 				],
 				"k8s_instance_groups": [
 					{
-						"tool_config_alias_id": "67c0167e-5bf9-4ec7-453f-3ce2253d61e8",
+						"tool_config_alias_id": "2c99a7d3-76d8-40be-4d71-f7811bc9a338",
 						"docker_registry_alias_id": "cc9edc73-f30b-4c9a-5d01-e03f7930a904",
 						"name": "((application.name))",
 						"cluster_name": "",
@@ -268,7 +289,7 @@
 					},
 					{
 						"name": "global.openshift.enabled",
-						"value": true,
+						"value": false,
 						"type": "boolean"
 					},
 					{
@@ -338,7 +359,7 @@
 					},
 					{
 						"name": "client.enabled",
-						"value": true,
+						"value": false,
 						"type": "boolean"
 					},
 					{
@@ -396,6 +417,26 @@
 						"name": "gr.helm.wait.timeout",
 						"value": "5m",
 						"type": "string"
+					},
+					{
+						"name": "syncCatalog.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.enabled",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "server.replicas",
+						"value": 3,
+						"type": "number"
 					}
 				],
 				"deployment_strategy": {
@@ -421,7 +462,7 @@
 				],
 				"k8s_instance_groups": [
 					{
-						"tool_config_alias_id": "67c0167e-5bf9-4ec7-453f-3ce2253d61e8",
+						"tool_config_alias_id": "2c99a7d3-76d8-40be-4d71-f7811bc9a338",
 						"docker_registry_alias_id": "cc9edc73-f30b-4c9a-5d01-e03f7930a904",
 						"name": "((application.name))",
 						"cluster_name": "",

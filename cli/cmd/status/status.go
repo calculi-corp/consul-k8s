@@ -28,6 +28,8 @@ const (
 type Command struct {
 	*common.BaseCommand
 
+	helmActionsRunner helm.HelmActionsRunner
+
 	kubernetes kubernetes.Interface
 
 	set *flag.Sets
@@ -63,10 +65,11 @@ func (c *Command) init() {
 // Run checks the status of a Consul installation on Kubernetes.
 func (c *Command) Run(args []string) int {
 	c.once.Do(c.init)
+	if c.helmActionsRunner == nil {
+		c.helmActionsRunner = &helm.ActionRunner{}
+	}
 
-	// The logger is initialized in main with the name cli. Here, we reset the name to status so log lines would be prefixed with status.
 	c.Log.ResetNamed("status")
-
 	defer common.CloseWithError(c.BaseCommand)
 
 	if err := c.set.Parse(args); err != nil {
@@ -101,7 +104,11 @@ func (c *Command) Run(args []string) int {
 
 	c.UI.Output("Consul Status Summary", terminal.WithHeaderStyle())
 
-	releaseName, namespace, err := common.CheckForInstallations(settings, uiLogger)
+	_, releaseName, namespace, err := c.helmActionsRunner.CheckForInstallations(&helm.CheckForInstallationsOptions{
+		Settings:    settings,
+		ReleaseName: common.DefaultReleaseName,
+		DebugLog:    uiLogger,
+	})
 	if err != nil {
 		c.UI.Output(err.Error(), terminal.WithErrorStyle())
 		return 1
@@ -112,18 +119,9 @@ func (c *Command) Run(args []string) int {
 		return 1
 	}
 
-	if s, err := c.checkConsulServers(namespace); err != nil {
-		c.UI.Output(err.Error(), terminal.WithErrorStyle())
+	if err := c.checkConsulServers(namespace); err != nil {
+		c.UI.Output("Unable to check Kubernetes cluster for Consul servers: %v", err)
 		return 1
-	} else {
-		c.UI.Output(s, terminal.WithSuccessStyle())
-	}
-
-	if s, err := c.checkConsulClients(namespace); err != nil {
-		c.UI.Output(err.Error(), terminal.WithErrorStyle())
-		return 1
-	} else {
-		c.UI.Output(s, terminal.WithSuccessStyle())
 	}
 
 	return 0
@@ -165,7 +163,7 @@ func (c *Command) checkHelmInstallation(settings *helmCLI.EnvSettings, uiLogger 
 	}
 
 	statuser := action.NewStatus(statusConfig)
-	rel, err := statuser.Run(releaseName)
+	rel, err := c.helmActionsRunner.GetStatus(statuser, releaseName)
 	if err != nil {
 		return fmt.Errorf("couldn't check for installations: %s", err)
 	}
@@ -216,43 +214,24 @@ func validEvent(events []release.HookEvent) bool {
 	return false
 }
 
-// checkConsulServers uses the Kubernetes list function to report if the consul servers are healthy.
-func (c *Command) checkConsulServers(namespace string) (string, error) {
-	servers, err := c.kubernetes.AppsV1().StatefulSets(namespace).List(c.Ctx,
-		metav1.ListOptions{LabelSelector: "app=consul,chart=consul-helm,component=server"})
+// checkConsulServers prints the status of Consul servers if they
+// are expected to be found in the Kubernetes cluster. It does not check for
+// server status if they are not running within the Kubernetes cluster.
+func (c *Command) checkConsulServers(namespace string) error {
+	servers, err := c.kubernetes.AppsV1().StatefulSets(namespace).List(c.Ctx, metav1.ListOptions{LabelSelector: "app=consul,chart=consul-helm,component=server"})
 	if err != nil {
-		return "", err
-	} else if len(servers.Items) == 0 {
-		return "", errors.New("no server stateful set found")
-	} else if len(servers.Items) > 1 {
-		return "", errors.New("found multiple server stateful sets")
+		return err
+	}
+	if len(servers.Items) != 0 {
+		desiredServers, readyServers := int(*servers.Items[0].Spec.Replicas), int(servers.Items[0].Status.ReadyReplicas)
+		if readyServers < desiredServers {
+			c.UI.Output("Consul servers healthy %d/%d", readyServers, desiredServers, terminal.WithErrorStyle())
+		} else {
+			c.UI.Output("Consul servers healthy %d/%d", readyServers, desiredServers)
+		}
 	}
 
-	desiredReplicas := int(*servers.Items[0].Spec.Replicas)
-	readyReplicas := int(servers.Items[0].Status.ReadyReplicas)
-	if readyReplicas < desiredReplicas {
-		return "", fmt.Errorf("%d/%d Consul servers unhealthy", desiredReplicas-readyReplicas, desiredReplicas)
-	}
-	return fmt.Sprintf("Consul servers healthy (%d/%d)", readyReplicas, desiredReplicas), nil
-}
-
-// checkConsulClients uses the Kubernetes list function to report if the consul clients are healthy.
-func (c *Command) checkConsulClients(namespace string) (string, error) {
-	clients, err := c.kubernetes.AppsV1().DaemonSets(namespace).List(c.Ctx,
-		metav1.ListOptions{LabelSelector: "app=consul,chart=consul-helm"})
-	if err != nil {
-		return "", err
-	} else if len(clients.Items) == 0 {
-		return "", errors.New("no client daemon set found")
-	} else if len(clients.Items) > 1 {
-		return "", errors.New("found multiple client daemon sets")
-	}
-	desiredReplicas := int(clients.Items[0].Status.DesiredNumberScheduled)
-	readyReplicas := int(clients.Items[0].Status.NumberReady)
-	if readyReplicas < desiredReplicas {
-		return "", fmt.Errorf("%d/%d Consul clients unhealthy", desiredReplicas-readyReplicas, desiredReplicas)
-	}
-	return fmt.Sprintf("Consul clients healthy (%d/%d)", readyReplicas, desiredReplicas), nil
+	return nil
 }
 
 // setupKubeClient to use for non Helm SDK calls to the Kubernetes API The Helm SDK will use
