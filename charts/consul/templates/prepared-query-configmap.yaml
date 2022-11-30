@@ -16,7 +16,7 @@ data:
     #!/bin/sh
 
     function verifyConsulUp {
-      curl https://${HOST_IP}:8501/v1/status/leader {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }} 2>/dev/null | grep -E '".+"'
+      curl https://${POD_IP}:8501/v1/status/leader {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }} 2>/dev/null | grep -E '".+"'
     }
 
     (while true
@@ -25,13 +25,13 @@ data:
         verifyConsulUp || returnCode=$?
         if [ $returnCode -eq 0 ]; then
           echo "Looking for an existing prepared query"
-          id=$(curl --silent --request GET https://${HOST_IP}:8501/v1/query {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }} | jq .[0].ID -r)
+          id=$(curl --silent --request GET https://${POD_IP}:8501/v1/query {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }} | jq .[0].ID -r)
           if [ "${id}" == "null" ]; then
             echo "No prepared query found...creating"
-            curl --request POST https://${HOST_IP}:8501/v1/query --data @/consul/prepared-query/configured-query.json {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }}
+            curl --request POST https://${POD_IP}:8501/v1/query --data @/consul/prepared-query/configured-query.json {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }}
           elif [ -s "${id}" ]; then
             echo "Updating prepared query with ID ${id}"
-            curl --request PUT https://${HOST_IP}:8501/v1/query/${id} --data @/consul/prepared-query/configured-query.json {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }}
+            curl --request PUT https://${POD_IP}:8501/v1/query/${id} --data @/consul/prepared-query/configured-query.json {{ if .Values.global.tls.enabled }}--cacert ${CONSUL_CACERT}{{- end }}
           fi
           break
         else
