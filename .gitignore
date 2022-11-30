@@ -13,3 +13,4 @@ deploy.yaml*
 deploy-server-client.yaml
 .vscode
 debug-*.yaml
+.bob/

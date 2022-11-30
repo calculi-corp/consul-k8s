@@ -349,7 +349,7 @@ rebase the branch on main, fixing any conflicts along the way before the code ca
         ...
         IngressGateway    string = "ingressgateway"
     ```
-1. Update `control-plane/subcommand/controller/command.go` and add your controller:
+1. Update `control-plane/subcommand/inject-connect/command.go` and add your controller:
     ```go
     if err = (&controller.IngressGatewayController{
         ConfigEntryController: configEntryReconciler,
@@ -361,7 +361,7 @@ rebase the branch on main, fixing any conflicts along the way before the code ca
         return 1
     }
     ```
-1. Update `control-plane/subcommand/controller/command.go` and add your webhook (the path should match the kubebuilder annotation):
+1. Update `control-plane/subcommand/inject-connect/command.go` and add your webhook (the path should match the kubebuilder annotation):
     ```go
     mgr.GetWebhookServer().Register("/mutate-v1alpha1-ingressgateway",
         &webhook.Admission{Handler: &v1alpha1.IngressGatewayWebhook{
@@ -632,7 +632,7 @@ You can run other tests by enabling them by passing appropriate flags to `go tes
 For example, to run mesh gateway tests, which require two Kubernetes clusters,
 you may use the following command:
 
-    go test ./charts/consul/... -p 1 -timeout 20m \
+    go test ./... -p 1 -timeout 20m \
         -enable-multi-cluster \
         -kubecontext=<name of the primary Kubernetes context> \
         -secondary-kubecontext=<name of the secondary Kubernetes context>
@@ -879,7 +879,7 @@ func TestExample(t *testing.T) {
 }
 ```
 
-Please see [mesh gateway tests](acceptance/tests/mesh-gateway/mesh_gateway_test.go)
+Please see [wan federation tests](acceptance/tests/wan-federation/wan_federation_test.go)
 for an example of how to use write a test that uses multiple contexts.
 
 #### Writing Assertions

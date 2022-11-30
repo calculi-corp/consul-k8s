@@ -6,7 +6,7 @@ orbs:
 executors:
   go:
     docker:
-      - image: docker.mirror.hashicorp.services/cimg/go:1.18.3
+      - image: docker.mirror.hashicorp.services/cimg/go:1.19.2
     environment:
       TEST_RESULTS: /tmp/test-results # path to where test results are saved
 
@@ -21,8 +21,8 @@ gke-terraform-path: &gke-terraform-path charts/consul/test/terraform/gke
 eks-terraform-path: &eks-terraform-path charts/consul/test/terraform/eks
 aks-terraform-path: &aks-terraform-path charts/consul/test/terraform/aks
 openshift-terraform-path: &openshift-terraform-path charts/consul/test/terraform/openshift
-# This image is built from charts/consul/test/docker/Test.dockerfile and provides the necessary dependencies for running on our cloud targets.
-consul-helm-test-image: &consul-helm-test-image docker.mirror.hashicorp.services/hashicorpdev/consul-helm-test:0.12.3
+# This image is built from test/docker/Test.dockerfile
+consul-helm-test-image: &consul-helm-test-image docker.mirror.hashicorp.services/hashicorpdev/consul-helm-test:0.15.0
 
 ########################
 # COMMANDS
@@ -34,16 +34,16 @@ commands:
       - run:
           name: Install go, gotestsum, kind, kubectl, and helm
           command: |
-            wget https://golang.org/dl/go1.18.3.linux-amd64.tar.gz
-            sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.18.3.linux-amd64.tar.gz
-            rm go1.18.3.linux-amd64.tar.gz
+            wget https://golang.org/dl/go1.19.2.linux-amd64.tar.gz
+            sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.19.2.linux-amd64.tar.gz
+            rm go1.19.2.linux-amd64.tar.gz
             echo 'export PATH=$PATH:/usr/local/go/bin' >> $BASH_ENV
 
-            wget https://github.com/gotestyourself/gotestsum/releases/download/v1.6.4/gotestsum_1.6.4_linux_amd64.tar.gz
-            sudo tar -C /usr/local/bin -xzf gotestsum_1.6.4_linux_amd64.tar.gz
-            rm gotestsum_1.6.4_linux_amd64.tar.gz
+            wget https://github.com/gotestyourself/gotestsum/releases/download/v1.8.2/gotestsum_1.8.2_linux_amd64.tar.gz
+            sudo tar -C /usr/local/bin -xzf gotestsum_1.8.2_linux_amd64.tar.gz
+            rm gotestsum_1.8.2_linux_amd64.tar.gz
 
-            curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.15.0/kind-linux-amd64
+            curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.17.0/kind-linux-amd64
             chmod +x ./kind
             sudo mv ./kind /usr/local/bin/kind
 
@@ -51,8 +51,8 @@ commands:
             chmod +x ./kubectl
             sudo mv ./kubectl /usr/local/bin/kubectl
 
-            wget https://get.helm.sh/helm-v3.7.0-linux-amd64.tar.gz
-            tar -zxvf helm-v3.7.0-linux-amd64.tar.gz
+            wget https://get.helm.sh/helm-v3.9.4-linux-amd64.tar.gz
+            tar -zxvf helm-v3.9.4-linux-amd64.tar.gz
             sudo mv linux-amd64/helm /usr/local/bin/helm
   custom-checkout:
     description: |
@@ -170,8 +170,8 @@ commands:
                   do
                     if ! gotestsum --no-summary=all --jsonfile=jsonfile-${pkg////-} -- $pkg -p 1 -timeout 2h -failfast \
                           << parameters.additional-flags >> \
-                          ${ENABLE_ENTERPRISE:+-enable-enterprise} \
                           -enable-multi-cluster \
+                          ${ENABLE_ENTERPRISE:+-enable-enterprise} \
                           -debug-directory="$TEST_RESULTS/debug" \
                           -consul-k8s-image=<< parameters.consul-k8s-image >>
                     then
@@ -573,7 +573,7 @@ jobs:
       - checkout
       - install-prereqs
       - create-kind-clusters:
-          version: "v1.24.4"
+          version: "v1.25.3"
       - restore_cache:
           keys:
             - consul-helm-modcache-v2-{{ checksum "acceptance/go.mod" }}
@@ -589,7 +589,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
       - run-acceptance-tests:
           failfast: true
-          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -consul-image=docker.mirror.hashicorp.services/hashicorppreview/consul-enterprise:1.14-dev
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
@@ -606,7 +606,7 @@ jobs:
       - checkout
       - install-prereqs
       - create-kind-clusters:
-          version: "v1.24.4"
+          version: "v1.25.3"
       - restore_cache:
           keys:
             - consul-helm-modcache-v2-{{ checksum "acceptance/go.mod" }}
@@ -622,7 +622,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
       - run-acceptance-tests:
           failfast: true
-          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -enable-transparent-proxy -consul-image=docker.mirror.hashicorp.services/hashicorppreview/consul-enterprise:1.14-dev
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
@@ -638,8 +638,8 @@ jobs:
     steps:
       - checkout
       - install-prereqs
-      - create-kind-clusters:
-          version: "v1.24.4"
+      - create-kind-cni-clusters:
+          version: "v1.25.3"
       - restore_cache:
           keys:
             - consul-helm-modcache-v2-{{ checksum "acceptance/go.mod" }}
@@ -655,7 +655,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
       - run-acceptance-tests:
           failfast: true
-          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -enable-transparent-proxy -enable-cni -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -enable-transparent-proxy -enable-cni -consul-image=docker.mirror.hashicorp.services/hashicorppreview/consul-enterprise:1.14-dev
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
@@ -773,7 +773,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
 
       - run-acceptance-tests:
-          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-pod-security-policies -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-pod-security-policies -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.14-dev
 
       - store_test_results:
           path: /tmp/test-results
@@ -842,7 +842,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
 
       - run-acceptance-tests:
-          additional-flags: -use-gke -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-pod-security-policies -enable-transparent-proxy -enable-cni -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -use-gke -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-pod-security-policies -enable-transparent-proxy -enable-cni -consul-image=hashicorppreview/consul-enterprise:1.14-dev
 
       - store_test_results:
           path: /tmp/test-results
@@ -899,7 +899,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
 
       - run-acceptance-tests:
-          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -use-aks -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.14-dev
 
       - store_test_results:
           path: /tmp/test-results
@@ -956,7 +956,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
 
       - run-acceptance-tests:
-          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-transparent-proxy -enable-cni -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -use-aks -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-transparent-proxy -enable-cni -consul-image=hashicorppreview/consul-enterprise:1.14-dev
 
       - store_test_results:
           path: /tmp/test-results
@@ -1018,7 +1018,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
 
       - run-acceptance-tests:
-          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.14-dev
 
       - store_test_results:
           path: /tmp/test-results
@@ -1081,7 +1081,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
 
       - run-acceptance-tests:
-          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-transparent-proxy -enable-cni -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-transparent-proxy -enable-cni -consul-image=hashicorppreview/consul-enterprise:1.14-dev
 
       - store_test_results:
           path: /tmp/test-results
@@ -1135,7 +1135,7 @@ jobs:
       - run: mkdir -p $TEST_RESULTS
 
       - run-acceptance-tests:
-          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-openshift -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.13-dev
+          additional-flags: -kubeconfig="$primary_kubeconfig" -secondary-kubeconfig="$secondary_kubeconfig" -enable-openshift -enable-transparent-proxy -consul-image=hashicorppreview/consul-enterprise:1.14-dev
 
       - store_test_results:
           path: /tmp/test-results
@@ -1154,57 +1154,19 @@ jobs:
           fail_only: true
           failure_message: "OpenShift acceptance tests failed. Check the logs at: ${CIRCLE_BUILD_URL}"
 
-  acceptance-kind-1-23-consul-compat-nightly-1-11:
-    environment:
-      - TEST_RESULTS: /tmp/test-results
-      - CONSUL_IMAGE: "docker.mirror.hashicorp.services/hashicorppreview/consul-enterprise:1.11-dev"
-      - ENVOY_IMAGE: "envoyproxy/envoy:v1.20.2"
-      - CONSUL_K8S_IMAGE: "docker.mirror.hashicorp.services/hashicorp/consul-k8s-control-plane:0.48.0"
-      - HELM_CHART_VERSION: "0.48.0"
-    machine:
-      image: ubuntu-2004:202010-01
-    resource_class: xlarge
-    steps:
-      - checkout
-      - install-prereqs
-      - create-kind-clusters:
-          version: "v1.23.0"
-      - restore_cache:
-          keys:
-            - consul-helm-modcache-v2-{{ checksum "acceptance/go.mod" }}
-      - run:
-          name: go mod download
-          working_directory: *acceptance-mod-path
-          command: go mod download
-      - save_cache:
-          key: consul-helm-modcache-v2-{{ checksum "acceptance/go.mod" }}
-          paths:
-            - ~/.go_workspace/pkg/mod
-      - build-cli
-      - run: mkdir -p $TEST_RESULTS
-      - run-acceptance-tests:
-          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -enable-transparent-proxy -consul-k8s-image=$CONSUL_K8S_IMAGE -consul-image=$CONSUL_IMAGE -consul-version="1.11" -envoy-image=$ENVOY_IMAGE -helm-chart-version=$HELM_CHART_VERSION
-      - store_test_results:
-          path: /tmp/test-results
-      - store_artifacts:
-          path: /tmp/test-results
-      - slack/status:
-          channel: *slack-channel
-          fail_only: true
-          failure_message: "Acceptance tests against Kind with Kubernetes v1.23 with Consul 1.11 nightly failed. Check the logs at: ${CIRCLE_BUILD_URL}"
-
   acceptance-kind-1-23-consul-compat-nightly-1-12:
     environment:
       - TEST_RESULTS: /tmp/test-results
       - CONSUL_IMAGE: "docker.mirror.hashicorp.services/hashicorppreview/consul-enterprise:1.12-dev"
       - ENVOY_IMAGE: "envoyproxy/envoy:v1.22.2"
-      - HELM_CHART_VERSION: "0.48.0"
-      - CONSUL_K8S_IMAGE: "docker.mirror.hashicorp.services/hashicorp/consul-k8s-control-plane:0.48.0"
+      - HELM_CHART_VERSION: "0.49.0"
+      - CONSUL_K8S_IMAGE: "docker.mirror.hashicorp.services/hashicorp/consul-k8s-control-plane:0.49.0"
     machine:
       image: ubuntu-2004:202010-01
     resource_class: xlarge
     steps:
-      - checkout
+      - custom-checkout:
+          git-ref: "v$HELM_CHART_VERSION"
       - install-prereqs
       - create-kind-clusters:
           version: "v1.23.0"
@@ -1222,7 +1184,8 @@ jobs:
       - build-cli
       - run: mkdir -p $TEST_RESULTS
       - run-acceptance-tests:
-          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -enable-transparent-proxy -consul-k8s-image=$CONSUL_K8S_IMAGE -consul-image=$CONSUL_IMAGE -consul-version="1.12" -envoy-image=$ENVOY_IMAGE -helm-chart-version=$HELM_CHART_VERSION
+          consul-k8s-image: $CONSUL_K8S_IMAGE
+          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -consul-image=$CONSUL_IMAGE -consul-version="1.12" -envoy-image=$ENVOY_IMAGE -helm-chart-version=$HELM_CHART_VERSION -enable-transparent-proxy
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
@@ -1237,13 +1200,14 @@ jobs:
       - TEST_RESULTS: /tmp/test-results
       - CONSUL_IMAGE: "docker.mirror.hashicorp.services/hashicorppreview/consul-enterprise:1.13-dev"
       - ENVOY_IMAGE: "envoyproxy/envoy:v1.23.1"
-      - CONSUL_K8S_IMAGE: "docker.mirror.hashicorp.services/hashicorp/consul-k8s-control-plane:0.48.0"
-      - HELM_CHART_VERSION: "0.48.0"
+      - CONSUL_K8S_IMAGE: "docker.mirror.hashicorp.services/hashicorp/consul-k8s-control-plane:0.49.0"
+      - HELM_CHART_VERSION: "0.49.0"
     machine:
       image: ubuntu-2004:202010-01
     resource_class: xlarge
     steps:
-      - checkout
+      - custom-checkout:
+          git-ref: "v$HELM_CHART_VERSION"
       - install-prereqs
       - create-kind-clusters:
           version: "v1.23.0"
@@ -1261,7 +1225,8 @@ jobs:
       - build-cli
       - run: mkdir -p $TEST_RESULTS
       - run-acceptance-tests:
-          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -enable-transparent-proxy -consul-k8s-image=$CONSUL_K8S_IMAGE -consul-image=$CONSUL_IMAGE -consul-version="1.13" -envoy-image=$ENVOY_IMAGE -helm-chart-version=$HELM_CHART_VERSION
+          consul-k8s-image: $CONSUL_K8S_IMAGE
+          additional-flags: -use-kind -kubecontext="kind-dc1" -secondary-kubecontext="kind-dc2" -consul-image=$CONSUL_IMAGE -consul-version="1.13" -envoy-image=$ENVOY_IMAGE -helm-chart-version=$HELM_CHART_VERSION -enable-transparent-proxy
       - store_test_results:
           path: /tmp/test-results
       - store_artifacts:
@@ -1307,7 +1272,7 @@ workflows:
       - acceptance-tproxy:
           context: consul-ci
           requires:
-            - dev-upload-docker
+          - dev-upload-docker
 
   nightly-cleanup:
     triggers:
@@ -1322,7 +1287,6 @@ workflows:
       - cleanup-azure-resources
       - cleanup-eks-resources
 
-
   nightly-acceptance-tests-release:
     description: |
       Tests which run on a release branch nightly. These exist separate from the main
@@ -1335,6 +1299,7 @@ workflows:
             branches:
               only:
                 - release/0.49.x
+                - release/1.0.x
     jobs:
       - build-distro:
           OS: "linux"
@@ -1412,6 +1377,5 @@ workflows:
               only:
                 - main
     jobs:
-      - acceptance-kind-1-23-consul-compat-nightly-1-11
       - acceptance-kind-1-23-consul-compat-nightly-1-12
       - acceptance-kind-1-23-consul-compat-nightly-1-13
