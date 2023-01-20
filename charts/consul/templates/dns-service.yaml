@@ -23,14 +23,14 @@ spec:
   clusterIP: {{ .Values.dns.clusterIP }}
 {{- end }}
   ports:
-    - name: dns-tcp
-      port: 53
-      protocol: "TCP"
-      targetPort: dns-tcp
     - name: dns-udp
       port: 53
       protocol: "UDP"
       targetPort: dns-udp
+    - name: dns-tcp
+      port: 53
+      protocol: "TCP"
+      targetPort: dns-tcp
   selector:
     app: {{ template "consul.name" . }}
     release: "{{ .Release.Name }}"
