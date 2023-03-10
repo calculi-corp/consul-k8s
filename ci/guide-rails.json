@@ -410,7 +410,7 @@
 					},
 					{
 						"name": "syncCatalog.k8sAllowNamespaces",
-						"value": "*",
+						"value": "\"*\"",
 						"type": "string"
 					},
 					{
