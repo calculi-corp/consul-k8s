@@ -435,18 +435,18 @@
 					},
 					{
 						"name": "client.join",
-						"value": false,
-						"type": "boolean"
+						"value": "((consul.joinservers))",
+						"type": "array"
 					},
 					{
 						"name": "client.hosts",
-						"value": false,
-						"type": "boolean"
+						"value": "((consul.joinservers))",
+						"type": "array"
 					},
 					{
 						"name": "externalServers.hosts",
-						"value": false,
-						"type": "boolean"
+						"value": "((consul.joinservers))",
+						"type": "array"
 					}
 				],
 				"deployment_strategy": {
