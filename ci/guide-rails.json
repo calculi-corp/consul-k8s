@@ -274,10 +274,275 @@
 				"deployment_target": 2
 			},
 			{
+				"name": "Release",
+				"segment_type": "release",
+				"run_after": [
+					"Isolation"
+				],
+				"exit_actions": {},
+				"properties": [
+					{
+						"name": "preparedQuery.enabled",
+						"value": true,
+						"type": "boolean"
+					},
+					{
+						"name": "global.openshift.enabled",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "privateRegistry.secret",
+						"value": "grdockercreds",
+						"type": "string"
+					},
+					{
+						"name": "privateRegistry.url",
+						"value": "((gr.docker_registry.server))",
+						"type": "string"
+					},
+					{
+						"name": "mkcerts.image",
+						"value": "registry.guide-rails.io/guide-rails/mkcerts",
+						"type": "string"
+					},
+					{
+						"name": "dns.enabled",
+						"value": true,
+						"type": "boolean"
+					},
+					{
+						"name": "global.enabled",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "global.datacenter",
+						"value": "((customer.name))-k8s-release",
+						"type": "string"
+					},
+					{
+						"name": "global.tls.enabled",
+						"value": true,
+						"type": "boolean"
+					},
+					{
+						"name": "global.tls.caKey.secretName",
+						"value": "consul-ca-key",
+						"type": "string"
+					},
+					{
+						"name": "global.tls.caKey.secretKey",
+						"value": "tls.key",
+						"type": "string"
+					},
+					{
+						"name": "global.tls.caCert.secretName",
+						"value": "consul-ca-cert",
+						"type": "string"
+					},
+					{
+						"name": "global.tls.caCert.secretKey",
+						"value": "tls.crt",
+						"type": "string"
+					},
+					{
+						"name": "server.enabled",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "server.serverCert.secretName",
+						"value": "consul-ca-cert",
+						"type": "string"
+					},
+					{
+						"name": "client.enabled",
+						"value": true,
+						"type": "boolean"
+					},
+					{
+						"name": "privateRegistry.username",
+						"value": "((gr.docker_registry.username))",
+						"type": "string"
+					},
+					{
+						"name": "privateRegistry.password",
+						"value": "((gr.docker_registry.password))",
+						"type": "string"
+					},
+					{
+						"name": "global.tls.caKey.key",
+						"value": "((tls.key))",
+						"type": "string"
+					},
+					{
+						"name": "global.tls.caCert.cert",
+						"value": "((tls.cert))",
+						"type": "string"
+					},
+					{
+						"name": "gr.helm.wait.timeout",
+						"value": "5m",
+						"type": "string"
+					},
+					{
+						"name": "syncCatalog.enabled",
+						"value": true,
+						"type": "boolean"
+					},
+					{
+						"name": "syncCatalog.default",
+						"value": true,
+						"type": "boolean"
+					},
+					{
+						"name": "syncCatalog.toK8S",
+						"value": "true",
+						"type": "string"
+					},
+					{
+						"name": "syncCatalog.toConsul",
+						"value": "true",
+						"type": "string"
+					},
+					{
+						"name": "syncCatalog.k8sAllowNamespaces",
+						"value": "*",
+						"type": "string"
+					},
+					{
+						"name": "syncCatalog.k8sTag",
+						"value": "((application.shortsha))",
+						"type": "string"
+					},
+					{
+						"name": "syncCatalog.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.consulNamespaces.mirroringK8S",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "connectInject.enabled",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "client.join",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "client.hosts",
+						"value": false,
+						"type": "boolean"
+					},
+					{
+						"name": "externalServers.hosts",
+						"value": false,
+						"type": "boolean"
+					}
+				],
+				"deployment_strategy": {
+					"canaries": 1,
+					"max_in_flight": 1,
+					"canary_watch_time": "5000-30000",
+					"update_watch_time": "5000-30000",
+					"serial": false
+				},
+				"application_init": {},
+				"instance_tags": [
+					{
+						"name": "application.name",
+						"value": "((application.name))"
+					}
+				],
+				"k8s_instance_groups": [
+					{
+						"tool_config_alias_id": "524550a9-4d21-43d2-97bd-2eb2c3feca9b",
+						"docker_registry_alias_id": "24acfe36-407d-4f72-6d2a-e28efb42de53",
+						"name": "((application.name))-west",
+						"cluster_name": "",
+						"namespace": "((application.name))-((application.branch))",
+						"replicas": 1,
+						"containers": [
+							{
+								"name": "((application.name))",
+								"resources": {},
+								"imagePullPolicy": "Always",
+								"securityContext": {
+									"runAsNonRoot": true
+								}
+							}
+						],
+						"load_balancing_type": 2,
+						"service_name": "((application.name))-((application.branch))",
+						"type": "Deployment",
+						"deploy_application": false,
+						"helm_packages": [
+							{
+								"name": "consul",
+								"type": 2,
+								"helmPackages": [
+									{
+										"pkg_source": 1,
+										"charts_folder": "charts/consul",
+										"chart_name": "consul",
+										"release_name": "consul-((segment.name))"
+									}
+								]
+							}
+						]
+					},
+					{
+						"tool_config_alias_id": "f66d2610-d7a9-4faf-bea2-cfbf8b9301df",
+						"docker_registry_alias_id": "24acfe36-407d-4f72-6d2a-e28efb42de53",
+						"name": "((application.name))-east",
+						"cluster_name": "",
+						"namespace": "((application.name))-((application.branch))",
+						"replicas": 1,
+						"containers": [
+							{
+								"name": "((application.name))",
+								"resources": {},
+								"imagePullPolicy": "Always",
+								"securityContext": {
+									"runAsNonRoot": true
+								}
+							}
+						],
+						"load_balancing_type": 2,
+						"service_name": "((application.name))-((application.branch))",
+						"type": "Deployment",
+						"deploy_application": false,
+						"helm_packages": [
+							{
+								"name": "consul",
+								"type": 2,
+								"helmPackages": [
+									{
+										"pkg_source": 1,
+										"charts_folder": "charts/consul",
+										"chart_name": "consul",
+										"release_name": "consul-((segment.name))"
+									}
+								]
+							}
+						]
+					}
+				],
+				"deployment_target": 2
+			},
+			{
 				"name": "Production",
 				"segment_type": "production",
 				"run_after": [
-					"Isolation"
+					"Isolation",
+					"Release"
 				],
 				"exit_actions": {},
 				"properties": [
@@ -503,7 +768,13 @@
 		"exit_actions": {},
 		"default_properties": [],
 		"deployment_files": [],
-		"application_init": {}
+		"application_init": {},
+		"releases": [
+			{
+				"name": "consul",
+				"version": "latest"
+			}
+		]
 	},
 	"organization": {
 		"orgname": "GR-Product"
