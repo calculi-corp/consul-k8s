@@ -434,17 +434,17 @@
 					},
 					{
 						"name": "client.join",
-						"value": "((consul.joinservers))",
+						"value": "((consul.dev.joinservers))",
 						"type": "array"
 					},
 					{
 						"name": "client.hosts",
-						"value": "((consul.joinservers))",
+						"value": "((consul.dev.joinservers))",
 						"type": "array"
 					},
 					{
 						"name": "externalServers.hosts",
-						"value": "((consul.joinservers))",
+						"value": "((consul.dev.joinservers))",
 						"type": "array"
 					},
 					{
