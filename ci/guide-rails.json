@@ -51,7 +51,6 @@
 			{
 				"name": "Isolation",
 				"segment_type": "isolation",
-				"persistent": true,
 				"run_after": [
 					"Build"
 				],
