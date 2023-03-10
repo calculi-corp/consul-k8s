@@ -473,7 +473,7 @@
 						"docker_registry_alias_id": "24acfe36-407d-4f72-6d2a-e28efb42de53",
 						"name": "((application.name))-west",
 						"cluster_name": "",
-						"namespace": "((application.name))-((application.branch))",
+						"namespace": "guide-rails",
 						"replicas": 1,
 						"containers": [
 							{
@@ -515,7 +515,7 @@
 						"docker_registry_alias_id": "24acfe36-407d-4f72-6d2a-e28efb42de53",
 						"name": "((application.name))-east",
 						"cluster_name": "",
-						"namespace": "((application.name))-((application.branch))",
+						"namespace": "guide-rails",
 						"replicas": 1,
 						"containers": [
 							{
