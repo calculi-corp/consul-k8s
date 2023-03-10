@@ -502,6 +502,12 @@
 									}
 								]
 							}
+						],
+						"properties": [
+							{
+								"name": "global.datacenter",
+								"value": "dc1"
+							}
 						]
 					},
 					{
@@ -537,6 +543,12 @@
 										"release_name": "consul-((segment.name))"
 									}
 								]
+							}
+						],
+						"properties": [
+							{
+								"name": "global.datacenter",
+								"value": "dc2"
 							}
 						]
 					}
