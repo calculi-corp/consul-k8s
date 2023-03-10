@@ -446,6 +446,11 @@
 						"name": "externalServers.hosts",
 						"value": "((consul.joinservers))",
 						"type": "array"
+					},
+					{
+						"name": "externalServers.enabled",
+						"value": true,
+						"type": "boolean"
 					}
 				],
 				"deployment_strategy": {
