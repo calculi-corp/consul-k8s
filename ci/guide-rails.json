@@ -235,8 +235,8 @@
 				],
 				"k8s_instance_groups": [
 					{
-						"tool_config_alias_id": "2c99a7d3-76d8-40be-4d71-f7811bc9a338",
-						"docker_registry_alias_id": "cc9edc73-f30b-4c9a-5d01-e03f7930a904",
+						"tool_config_alias_id": "524550a9-4d21-43d2-97bd-2eb2c3feca9b",
+						"docker_registry_alias_id": "24acfe36-407d-4f72-6d2a-e28efb42de53",
 						"name": "((application.name))",
 						"cluster_name": "",
 						"namespace": "((application.name))-isolation",
@@ -461,8 +461,8 @@
 				],
 				"k8s_instance_groups": [
 					{
-						"tool_config_alias_id": "2c99a7d3-76d8-40be-4d71-f7811bc9a338",
-						"docker_registry_alias_id": "cc9edc73-f30b-4c9a-5d01-e03f7930a904",
+						"tool_config_alias_id": "524550a9-4d21-43d2-97bd-2eb2c3feca9b",
+						"docker_registry_alias_id": "24acfe36-407d-4f72-6d2a-e28efb42de53",
 						"name": "((application.name))",
 						"cluster_name": "",
 						"namespace": "((application.name))",
