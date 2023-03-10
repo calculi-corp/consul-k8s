@@ -549,6 +549,16 @@
 							{
 								"name": "global.datacenter",
 								"value": "dc2"
+							},
+							{
+								"name": "client.join ",
+								"value": "((consul.dev-east-first.joinservers))",
+								"type": "array"
+							},
+							{
+								"name": "externalServers.hosts",
+								"value": "((consul.dev-east-first.joinservers))",
+								"type": "array"
 							}
 						]
 					}
