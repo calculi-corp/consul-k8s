@@ -9,13 +9,11 @@ require (
 	github.com/google/go-cmp v0.5.7
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/hashicorp/consul-k8s/control-plane/cni v0.0.0-20220831174802-b8af65262de8
-	github.com/hashicorp/consul-server-connection-manager v0.0.0-20220922180412-01c5be1c636f
 	github.com/hashicorp/consul/api v1.10.1-0.20221005170644-13da2c5fad69
 	github.com/hashicorp/consul/sdk v0.11.0
 	github.com/hashicorp/go-discover v0.0.0-20200812215701-c4b85f6ed31f
 	github.com/hashicorp/go-hclog v1.2.2
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/hashicorp/go-rootcerts v1.0.2
 	github.com/hashicorp/serf v0.10.1
 	github.com/kr/text v0.2.0
 	github.com/miekg/dns v1.1.41
@@ -119,7 +117,7 @@ require (
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20210602131652-f16073e35f0c // indirect
 	google.golang.org/grpc v1.48.0 // indirect
-	google.golang.org/protobuf v1.28.1 // indirect
+	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/resty.v1 v1.12.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
